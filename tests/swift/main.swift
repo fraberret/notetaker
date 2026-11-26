@@ -21,5 +21,5 @@ func fine() -> Never {
     exit(0)
 }
 
-verifica(1 + 1 == 2, "aritmetica")
+testLogica()
 fine()
