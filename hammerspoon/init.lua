@@ -365,7 +365,11 @@ local function pulisci(t)
 end
 
 local function incolla(t)
-  if D.senzaIncolla then D.ultimoIncollato = t; return end  -- solo per le prove con `hs -c`
+  -- Solo per le prove con `hs -c`: D.senzaIncolla = istante (secondi) fino a cui non si incolla.
+  -- È una scadenza e non un sì/no, così una prova dimenticata non blocca la dettatura per sempre.
+  if type(D.senzaIncolla) == "number" and hs.timer.secondsSinceEpoch() < D.senzaIncolla then
+    D.ultimoIncollato = t; return
+  end
   local prima = hs.pasteboard.getContents()
   hs.pasteboard.setContents(t)
   hs.eventtap.keyStroke({ "cmd" }, "v", 0)
