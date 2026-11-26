@@ -4,6 +4,7 @@ require("hs.ipc")
 --   Fn due volte di seguito: mani libere; un altro tocco di Fn finisce. Esc annulla.
 --   Clic sulla pillola: inizia o finisce una dettatura.
 --   Se un'app di call (Meet, Zoom, Teams, FaceTime, WhatsApp, ...) usa il microfono, la pillola chiede se trascrivere.
+--   Col mouse sopra la linguetta: microfono = dettatura, pallino rosso sotto = registra una call.
 --   Ctrl+Option+Cmd+R: avvia o ferma la registrazione di una call.
 --   Ctrl+Option+Cmd+N o clic destro sulla pillola: apre il Notetaker.
 -- Note: ~/.config/trascrittore/ (suoni in suoni/, registratore e comando `call`).
@@ -214,9 +215,22 @@ function disegna.riposo()
   end)
 end
 
-function disegna.sopra()  -- il mouse è sopra la linguetta: mostra il microfono
-  passa(34, 58, COL.fondo, function()
-    pillola:replaceElements(table.unpack(aggiungi({ fondo(34, 58) }, microfono(17, 28, COL.testo, 1))))
+function disegna.sopra()  -- il mouse è sopra la linguetta: microfono (dettatura) e, sotto, pallino rosso (call)
+  local w, h = 34, 100
+  passa(w, h, COL.fondo, function()
+    local el = aggiungi({ fondo(w, h) }, microfono(17, 28, COL.testo, 1))
+    aggiungi(el, {
+      { type = "rectangle", action = "fill", fillColor = COL.grigio, frame = { x = 9, y = 51, w = 16, h = 1 } },
+      { type = "circle", action = "stroke", strokeColor = COL.rosso, strokeWidth = 1.6,
+        center = { x = 17, y = 74 }, radius = 8 },
+      { type = "circle", action = "fill", fillColor = COL.rosso, center = { x = 17, y = 74 }, radius = 4.5 },
+      -- zone di clic invisibili sopra le icone: metà alta dettatura, metà bassa call
+      { type = "rectangle", action = "fill", fillColor = { white = 0, alpha = 0.01 },
+        frame = { x = 0, y = 0, w = w, h = 51 }, trackMouseDown = true, id = "detta" },
+      { type = "rectangle", action = "fill", fillColor = { white = 0, alpha = 0.01 },
+        frame = { x = 0, y = 52, w = w, h = h - 52 }, trackMouseDown = true, id = "registraCall" },
+    })
+    pillola:replaceElements(table.unpack(el))
   end)
 end
 
@@ -274,7 +288,7 @@ function disegna.trascrivo()  -- tre puntini in verticale che ondeggiano
 end
 
 function disegna.domanda()
-  local frase = "Call su " .. (appCallAttuale or "un'app") .. ": la trascrivo?"
+  local frase = "Call rilevata, vuoi registrare?"
   local tw = larghezzaTesto(frase, 13)
   local h = 46
   local w = 40 + tw + 12 + 46 + 6 + 46 + 10
@@ -677,6 +691,8 @@ pillola:mouseCallback(function(_, evento, id)
     if id == "si" then avviaCall() elseif id == "no" then micIgnora = true; mostra("riposo") end
   elseif D.stato == "call" or D.stato == "callSopra" then
     if id == "stop" then fermaCall() end
+  elseif D.stato == "sopra" and id == "registraCall" then
+    avviaCall()              -- il pallino rosso sotto il microfono: chiede con chi è la call e registra
   elseif D.stato == "riposo" or D.stato == "sopra" then
     iniziaDettatura(true)    -- dal clic: mani libere, si finisce con un altro clic o con Fn
   elseif D.stato == "ascolto" then
