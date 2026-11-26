@@ -27,6 +27,12 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     var voceCall: NSMenuItem!
     var timerAccessibilita: Timer?
     var lanciataAlLogin = false
+    var imp = Impostazioni()
+    var osservatore: Osservatore?
+    let whisper = ServerWhisper()
+    var dettatura: Dettatura!
+    var tasto: TastoDettatura!
+    var tastiera: Tastiera!
 
     func applicationWillFinishLaunching(_ n: Notification) {
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(apriURL(_:risposta:)),
@@ -44,16 +50,64 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         avviaMotore()
         pillola = Pillola()
         suoni = Suoni(cartella: Percorsi.suoni)
-        suoni.aggiorna(Impostazioni.leggi(try? Data(contentsOf: Percorsi.dati.appendingPathComponent("impostazioni.json"))))
+        leggiImpostazioni()
+        creaDettatura()
         let c = Comandi(pillola: pillola)
         comandi = c
         pillola.cambiato = { _ in c.scriviStato() }
         pillola.clicDestro = { [weak self] in self?.apriFinestra() }
+        pillola.clic = { [weak self] zona in self?.clicPillola(zona) }
+        dettatura.senzaIncollaFino = { c.senzaIncollaFino }
+        dettatura.cambiato = { c.scriviStato() }
+        c.detta = { [weak self] in self?.dettatura.iniziaManiLibere() }
+        c.fine = { [weak self] in self?.dettatura.fine(annulla: false) }
+        c.annulla = { [weak self] in self?.dettatura.fine(annulla: true) }
+        c.extra = { [weak self] in
+            guard let self else { return [:] }
+            return ["ultimoIncollato": self.dettatura.ultimoIncollato ?? NSNull(), "registroTasto": self.tasto.registro,
+                    "callInCorso": false, "tastieraAttiva": self.tastiera.attiva, "eventiTastiera": self.tastiera.eventi,
+                    "accessibilita": AXIsProcessTrusted()]
+        }
         pillola.mostra(.riposo)
+        controllaAccessibilita()
         urlInAttesa.forEach(c.gestisci)
         urlInAttesa = []
         registraAlLoginLaPrimaVolta()
         if !lanciataAlLogin { apriFinestra() }
+    }
+
+    // MARK: dettatura
+
+    func leggiImpostazioni() {
+        imp = Impostazioni.leggi(try? Data(contentsOf: Percorsi.dati.appendingPathComponent("impostazioni.json")))
+        suoni.aggiorna(imp)
+    }
+
+    func creaDettatura() {
+        dettatura = Dettatura(pillola: pillola, suoni: suoni, whisper: whisper, impostazioni: { [unowned self] in self.imp },
+                              cartellaCall: { nil })
+        tasto = TastoDettatura(azioni: dettatura, pianificatore: PianificatoreVero())
+        tastiera = Tastiera(tasto: tasto, quale: { [unowned self] in self.imp.tasto })
+        // Impostazioni e dizionario cambiano dal Notetaker: valgono subito.
+        osservatore = Osservatore(cartella: Percorsi.dati) { [weak self] nome in
+            if nome == "impostazioni.json" { self?.leggiImpostazioni() }
+            if nome == "dizionario.json" { self?.dettatura.aggiornaPrompt() }
+        }
+    }
+
+    func clicPillola(_ zona: ZonaPillola) {
+        switch pillola.stato {
+        case .riposo, .sopra:
+            if zona == .detta || zona == .fondo { dettatura.iniziaManiLibere() }   // dal clic: mani libere
+        case .ascolto:
+            dettatura.fine(annulla: false)
+        default:
+            break
+        }
+    }
+
+    @objc func menuDetta() {
+        if dettatura.registrando { dettatura.fine(annulla: false) } else { dettatura.iniziaManiLibere() }
     }
 
     /// Lanciata da macOS al login: niente finestra, solo icona e pillola.
@@ -88,19 +142,19 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         let apri = NSMenuItem(title: "Apri Notetaker", action: #selector(apriFinestra), keyEquivalent: "")
         apri.target = self
         m.addItem(apri)
-        voceDetta = NSMenuItem(title: "Detta", action: nil, keyEquivalent: "")
+        voceDetta = NSMenuItem(title: "Detta", action: #selector(menuDetta), keyEquivalent: "")
+        voceDetta.target = self
         m.addItem(voceDetta)
         voceCall = NSMenuItem(title: "Registra una call", action: nil, keyEquivalent: "")
         m.addItem(voceCall)
         m.addItem(.separator())
         m.addItem(NSMenuItem(title: "Esci da Notetaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         barra.menu = m
-        controllaAccessibilita()
     }
 
     /// Senza Accessibilità il tasto Fn non arriva: lo si dice nel menu e si ricontrolla ogni 5 s.
     func controllaAccessibilita() {
-        let manca = !AXIsProcessTrusted()
+        let manca = !AXIsProcessTrusted() || !tastiera.avvia()
         voceAccessibilita.isHidden = !manca
         barra.button?.appearsDisabled = manca
         if manca && timerAccessibilita == nil {
@@ -113,6 +167,8 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     }
 
     @objc func apriAccessibilita() {
+        // Con la richiesta macOS aggiunge Notetaker all'elenco e mostra il suo avviso; poi si aprono le Impostazioni.
+        _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 
@@ -216,7 +272,10 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         if p.isRunning { kill(p.processIdentifier, SIGKILL) }
     }
 
-    func applicationWillTerminate(_ n: Notification) { fermaMotore() }
+    func applicationWillTerminate(_ n: Notification) {
+        whisper.spegni()
+        fermaMotore()
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
         apriFinestra()

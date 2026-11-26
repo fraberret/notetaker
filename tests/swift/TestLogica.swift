@@ -195,7 +195,16 @@ func testMultipart() {
     verifica(corpo.range(of: Data([1, 2, 3])) != nil, "multipart audio")
 }
 
+func testLivello() {
+    verifica(livelloDaDecibel(-58) == 0, "livello -58 dB")
+    verifica(livelloDaDecibel(-20) == 1, "livello -20 dB")
+    verifica(abs(livelloDaDecibel(-39) - 0.5) < 0.001, "livello -39 dB: \(livelloDaDecibel(-39))")
+    verifica(livelloDaDecibel(-120) == 0 && livelloDaDecibel(0) == 1, "livello limitato a 0…1")
+    verifica(livelloDaDecibel(-.infinity) == 0, "silenzio assoluto")
+}
+
 func testLogica() {
+    testLivello()
     testTasto()
     testTesto()
     testAppCall()

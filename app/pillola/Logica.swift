@@ -209,3 +209,11 @@ func corpoMultipart(audio: Data, prompt: String, confine: String) -> Data {
     d.append("--\(confine)--\r\n".data(using: .utf8)!)
     return d
 }
+
+// MARK: livello della voce
+
+/// Livello 0…1 per le onde della pillola da un RMS in decibel (−58 dB = silenzio, −20 dB = voce piena).
+func livelloDaDecibel(_ db: Double) -> Double {
+    guard db.isFinite else { return 0 }
+    return max(0, min(1, (db + 58) / 38))
+}
