@@ -1,14 +1,16 @@
-// Notetaker: finestra dell'app. Avvia il motore locale (app/server.py), mostra l'interfaccia
-// in una WKWebView e chiude il motore quando l'app esce.
+// Notetaker: app sempre accesa con icona nella barra dei menu e pillola sul bordo dello schermo.
+// Avvia il motore locale (app/server.py), mostra l'interfaccia in una WKWebView quando si apre la finestra
+// e chiude il motore quando l'app esce (Cmd+Q). Chiudere la finestra la nasconde e basta.
 // Si compila con app/build.sh.
 
 import AppKit
+import ServiceManagement
 import WebKit
 
 let BASE = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/trascrittore")
 
 final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate,
-    WKDownloadDelegate {
+    WKDownloadDelegate, WKScriptMessageHandler {
     var finestra: NSWindow!
     var web: WKWebView!
     var motore: Process?
@@ -17,16 +19,128 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     let coda = DispatchQueue(label: "notetaker.motore")
     var pillola: Pillola!
     var suoni: Suoni!
+    var comandi: Comandi?
+    var urlInAttesa: [URL] = []
+    var barra: NSStatusItem!
+    var voceAccessibilita: NSMenuItem!
+    var voceDetta: NSMenuItem!
+    var voceCall: NSMenuItem!
+    var timerAccessibilita: Timer?
+    var lanciataAlLogin = false
+
+    func applicationWillFinishLaunching(_ n: Notification) {
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(apriURL(_:risposta:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
+        controllaLancioAlLogin()
+    }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
+        controllaLancioAlLogin()
         creaMenu()
+        creaBarra()
         creaFinestra()
         avviaMotore()
         pillola = Pillola()
         suoni = Suoni(cartella: Percorsi.suoni)
         suoni.aggiorna(Impostazioni.leggi(try? Data(contentsOf: Percorsi.dati.appendingPathComponent("impostazioni.json"))))
+        let c = Comandi(pillola: pillola)
+        comandi = c
+        pillola.cambiato = { _ in c.scriviStato() }
+        pillola.clicDestro = { [weak self] in self?.apriFinestra() }
         pillola.mostra(.riposo)
+        urlInAttesa.forEach(c.gestisci)
+        urlInAttesa = []
+        registraAlLoginLaPrimaVolta()
+        if !lanciataAlLogin { apriFinestra() }
+    }
+
+    /// Lanciata da macOS al login: niente finestra, solo icona e pillola.
+    func controllaLancioAlLogin() {
+        guard let e = NSAppleEventManager.shared().currentAppleEvent else { return }
+        if e.eventID == AEEventID(kAEOpenApplication),
+           e.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem) {
+            lanciataAlLogin = true
+        }
+    }
+
+    @objc func apriURL(_ e: NSAppleEventDescriptor, risposta: NSAppleEventDescriptor) {
+        guard let s = e.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue, let u = URL(string: s)
+        else { return }
+        if let c = comandi { c.gestisci(u) } else { urlInAttesa.append(u) }
+    }
+
+    // MARK: barra dei menu
+
+    func creaBarra() {
+        barra = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let b = barra.button {
+            b.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Notetaker")
+            b.image?.isTemplate = true
+        }
+        let m = NSMenu()
+        voceAccessibilita = NSMenuItem(title: "Manca il permesso di Accessibilità: aprilo",
+                                       action: #selector(apriAccessibilita), keyEquivalent: "")
+        voceAccessibilita.target = self
+        voceAccessibilita.isHidden = true
+        m.addItem(voceAccessibilita)
+        let apri = NSMenuItem(title: "Apri Notetaker", action: #selector(apriFinestra), keyEquivalent: "")
+        apri.target = self
+        m.addItem(apri)
+        voceDetta = NSMenuItem(title: "Detta", action: nil, keyEquivalent: "")
+        m.addItem(voceDetta)
+        voceCall = NSMenuItem(title: "Registra una call", action: nil, keyEquivalent: "")
+        m.addItem(voceCall)
+        m.addItem(.separator())
+        m.addItem(NSMenuItem(title: "Esci da Notetaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        barra.menu = m
+        controllaAccessibilita()
+    }
+
+    /// Senza Accessibilità il tasto Fn non arriva: lo si dice nel menu e si ricontrolla ogni 5 s.
+    func controllaAccessibilita() {
+        let manca = !AXIsProcessTrusted()
+        voceAccessibilita.isHidden = !manca
+        barra.button?.appearsDisabled = manca
+        if manca && timerAccessibilita == nil {
+            let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.controllaAccessibilita() }
+            RunLoop.main.add(t, forMode: .common)
+            timerAccessibilita = t
+        } else if !manca {
+            timerAccessibilita?.invalidate(); timerAccessibilita = nil
+        }
+    }
+
+    @objc func apriAccessibilita() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    @objc func apriFinestra() {
+        NSApp.setActivationPolicy(.regular)
+        finestra.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: avvio al login
+
+    func registraAlLoginLaPrimaVolta() {
+        let chiave = "alLoginImpostato"
+        guard !UserDefaults.standard.bool(forKey: chiave) else { return }
+        try? SMAppService.mainApp.register()
+        UserDefaults.standard.set(true, forKey: chiave)
+    }
+
+    /// Ponte con la finestra: {azione: "alLogin", valore?: Bool} → window.statoAlLogin(attivo).
+    func userContentController(_ u: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard let d = m.body as? [String: Any], d["azione"] as? String == "alLogin" else { return }
+        let s = SMAppService.mainApp
+        if let v = d["valore"] as? Bool {
+            do { if v { try s.register() } else { try s.unregister() } } catch {
+                NSLog("Notetaker: avvio al login non cambiato: \(error.localizedDescription)")
+            }
+        }
+        web.evaluateJavaScript("window.statoAlLogin && window.statoAlLogin(\(s.status == .enabled))")
     }
 
     // MARK: motore
@@ -66,7 +180,7 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         do {
             try p.run()
         } catch {
-            avvisoEdEsci("Non riesco ad avviare il motore: \(error.localizedDescription)")
+            avvisoMotore("Non riesco ad avviare il motore: \(error.localizedDescription)")
             return
         }
         motore = p
@@ -77,20 +191,21 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
                     self.web.load(URLRequest(url: url))
                 } else {
                     let motivo = self.coda.sync { String(data: self.errori, encoding: .utf8) ?? "" }
-                    self.avvisoEdEsci("Il motore del Notetaker non è partito entro 10 secondi.\n\n"
+                    self.avvisoMotore("Il motore del Notetaker non è partito entro 10 secondi.\n\n"
                         + (motivo.isEmpty ? "Nessun messaggio di errore." : String(motivo.suffix(1200))))
                 }
             }
         }
     }
 
-    func avvisoEdEsci(_ testo: String) {
+    /// Il motore serve solo alla finestra: se non parte si avvisa, ma l'app resta accesa con pillola e dettatura.
+    func avvisoMotore(_ testo: String) {
         let a = NSAlert()
-        a.messageText = "Notetaker non si avvia"
-        a.informativeText = testo
-        a.alertStyle = .critical
+        a.messageText = "La finestra del Notetaker non si avvia"
+        a.informativeText = testo + "\n\nLa pillola e la dettatura funzionano lo stesso."
+        a.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
         a.runModal()
-        NSApp.terminate(nil)
     }
 
     func fermaMotore() {
@@ -102,10 +217,17 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     }
 
     func applicationWillTerminate(_ n: Notification) { fermaMotore() }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        finestra.makeKeyAndOrderFront(nil)
-        return true
+        apriFinestra()
+        return false
+    }
+
+    /// Chiudere la finestra la nasconde: l'app resta accesa (icona nella barra e pillola) e sparisce dal Dock.
+    func windowShouldClose(_ w: NSWindow) -> Bool {
+        w.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+        return false
     }
 
     // MARK: finestra
@@ -114,6 +236,7 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         let config = WKWebViewConfiguration()
         config.mediaTypesRequiringUserActionForPlayback = []
         config.websiteDataStore = .nonPersistent()
+        config.userContentController.add(self, name: "notetaker")
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
         web.uiDelegate = self
@@ -127,9 +250,8 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         finestra.contentView = web
         finestra.delegate = self
         finestra.setFrameAutosaveName("Notetaker")
+        finestra.isReleasedWhenClosed = false
         if !finestra.setFrameUsingName("Notetaker") { finestra.center() }
-        finestra.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func creaMenu() {

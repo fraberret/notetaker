@@ -301,25 +301,6 @@ def chiedi(call_id: str, f: Path, domanda: str) -> str | None:
     return rilettura.esegui_claude(richiesta, timeout=300)
 
 
-_hs_cache = {"t": 0.0, "v": None}
-
-
-def hammerspoon_al_login():
-    """Stato dell'avvio automatico di Hammerspoon (sola lettura), letto con `hs -c`."""
-    if time.time() - _hs_cache["t"] < 60:
-        return _hs_cache["v"]
-    v = None
-    try:
-        r = subprocess.run(["/opt/homebrew/bin/hs", "-c", "print(hs.autoLaunch())"],
-                           capture_output=True, text=True, timeout=3)
-        if r.returncode == 0:
-            v = r.stdout.strip() == "true"
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    _hs_cache.update(t=time.time(), v=v)
-    return v
-
-
 # ---------- HTTP ----------
 
 class Gestore(BaseHTTPRequestHandler):
@@ -423,7 +404,7 @@ class Gestore(BaseHTTPRequestHandler):
         if parti == ["api", "dizionario"]:
             return self.invia(200, dizionario.carica())
         if parti == ["api", "impostazioni"]:
-            return self.invia(200, {**dati.carica_impostazioni(), "hammerspoon_al_login": hammerspoon_al_login()})
+            return self.invia(200, dati.carica_impostazioni())
         if parti == ["api", "cerca"]:
             return self.invia(200, self.cerca(query.get("q", [""])[0]))
         if len(parti) == 2 and parti[0] == "audio":
@@ -538,7 +519,7 @@ class Gestore(BaseHTTPRequestHandler):
             return self.post_dizionario(parti[2:], corpo)
         if parti == ["api", "impostazioni"]:
             imp = dati.salva_impostazioni(corpo)
-            return self.invia(200, {**imp, "hammerspoon_al_login": hammerspoon_al_login()})
+            return self.invia(200, imp)
         if len(parti) == 3 and parti[:2] == ["api", "chiedi"]:
             f = file_vault(parti[2])
             domanda = str(corpo.get("domanda", "")).strip()[:2000]

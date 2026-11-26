@@ -631,7 +631,6 @@ async function caricaImpostazioni() {
   const giorni = (k, v) => `<select data-k="${k}" data-num="1">${[[0, "Mai"], [30, "Dopo 30 giorni"], [60, "Dopo 60 giorni"], [90, "Dopo 90 giorni"], [180, "Dopo 180 giorni"], [365, "Dopo un anno"]]
     .concat([[v, `Dopo ${v} giorni`]].filter(([n]) => ![0, 30, 60, 90, 180, 365].includes(n)))
     .map(([n, t]) => `<option value="${n}" ${n === v ? "selected" : ""}>${t}</option>`).join("")}</select>`;
-  const hs = imp.hammerspoon_al_login;
   $("#impostazioni").innerHTML = `<h2>Impostazioni</h2><p class="spiega">Valgono subito: la pillola le rilegge appena cambiano.</p>
     <div class="blocco"><h3>Dettatura</h3>
       <div class="imp"><div>Tasto di dettatura<div class="desc">Tienilo premuto per dettare, due tocchi per le mani libere.</div></div>
@@ -651,11 +650,18 @@ async function caricaImpostazioni() {
       <div class="imp"><div>Cancella l'audio delle call<div class="desc">La trascrizione resta sempre.</div></div>${giorni("giorni_audio", imp.giorni_audio)}</div>
       <div class="imp"><div>Cancella lo storico delle dettature</div>${giorni("giorni_dettature", imp.giorni_dettature)}</div>
     </div>
-    <div class="blocco"><h3>Avvio</h3>
-      <div class="imp"><div>Hammerspoon parte al login<div class="desc">Serve alla pillola. Si attiva da solo all'avvio di Hammerspoon; si controlla in Impostazioni di Sistema › Generali › Elementi login.</div></div>
-        <span class="badge ${hs ? "giallo" : "rosso"}" style="${hs ? "background:rgba(51,194,117,.15);color:var(--verde)" : ""}">${hs === true ? "Sì" : hs === false ? "No" : "Non so (Hammerspoon spento?)"}</span></div>
+    <div class="blocco" id="b-avvio" hidden><h3>Avvio</h3>
+      <div class="imp"><div>Il Notetaker parte al login<div class="desc">Serve per avere la pillola sempre pronta. Si vede anche in Impostazioni di Sistema › Generali › Elementi login.</div></div>
+        <label class="interruttore"><input type="checkbox" id="al-login" aria-label="Il Notetaker parte al login"><span></span></label></div>
     </div>
     <div class="salvato" id="salvato" aria-live="polite"></div>`;
+  // Avvio al login: lo gestisce l'app (SMAppService); fuori dall'app la riga non compare.
+  const ponte = window.webkit?.messageHandlers?.notetaker;
+  if (ponte) {
+    window.statoAlLogin = attivo => { $("#b-avvio").hidden = false; $("#al-login").checked = !!attivo; };
+    $("#al-login").onchange = e => ponte.postMessage({azione: "alLogin", valore: e.target.checked});
+    ponte.postMessage({azione: "alLogin"});
+  }
   $("#impostazioni").querySelectorAll("[data-k]").forEach(c => c.addEventListener("change", async () => {
     const k = c.dataset.k;
     let v = c.type === "checkbox" ? c.checked : c.dataset.num ? Number(c.value) : c.value.trim();

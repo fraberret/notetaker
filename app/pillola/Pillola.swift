@@ -58,6 +58,8 @@ final class Pillola {
     var inizioCall: Date?
     var clic: ((ZonaPillola) -> Void)?
     var clicDestro: (() -> Void)?
+    /// Avvisato a ogni cambio di stato (per stato-pillola.json).
+    var cambiato: ((StatoPillola) -> Void)?
 
     private let pannello: Pannello
     private let vista: VistaPillola
@@ -99,6 +101,7 @@ final class Pillola {
         stato = s
         let (w, h, colore) = misure(s)
         passa(to: CGSize(width: w, height: h), colore: colore)
+        cambiato?(s)
     }
 
     /// Passaggio animato: lo sfondo si allarga o si stringe verso il bordo destro, poi compare il contenuto.

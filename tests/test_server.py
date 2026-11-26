@@ -124,7 +124,7 @@ def test_impostazioni_roundtrip(motore):
     s, imp, _ = motore["chiama"]("POST", "/api/impostazioni", {"secondi_domanda": 9, "tasto": "option_destro"})
     assert s == 200 and imp["secondi_domanda"] == 9
     _, imp, _ = motore["chiama"]("GET", "/api/impostazioni")
-    assert imp["tasto"] == "option_destro" and "hammerspoon_al_login" in imp
+    assert imp["tasto"] == "option_destro" and "hammerspoon_al_login" not in imp
     salvate = json.loads((Path(os.environ["CALL_DATI"]) / "impostazioni.json").read_text())
     assert salvate["secondi_domanda"] == 9
 

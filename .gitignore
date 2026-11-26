@@ -19,3 +19,6 @@ __pycache__/
 
 # Registratore compilato su ogni Mac da registra.swift (installa.sh)
 /registra
+
+# Stato della pillola per le prove (notetaker://)
+/stato-pillola.json
