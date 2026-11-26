@@ -15,12 +15,18 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     var indirizzo: URL?
     var errori = Data()
     let coda = DispatchQueue(label: "notetaker.motore")
+    var pillola: Pillola!
+    var suoni: Suoni!
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
         creaMenu()
         creaFinestra()
         avviaMotore()
+        pillola = Pillola()
+        suoni = Suoni(cartella: Percorsi.suoni)
+        suoni.aggiorna(Impostazioni.leggi(try? Data(contentsOf: Percorsi.dati.appendingPathComponent("impostazioni.json"))))
+        pillola.mostra(.riposo)
     }
 
     // MARK: motore
