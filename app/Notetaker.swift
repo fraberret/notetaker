@@ -4,13 +4,14 @@
 // Si compila con app/build.sh.
 
 import AppKit
+import Carbon.HIToolbox
 import ServiceManagement
 import WebKit
 
 let BASE = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/trascrittore")
 
 final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate,
-    WKDownloadDelegate, WKScriptMessageHandler {
+    WKDownloadDelegate, WKScriptMessageHandler, NSMenuDelegate {
     var finestra: NSWindow!
     var web: WKWebView!
     var motore: Process?
@@ -33,6 +34,10 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
     var dettatura: Dettatura!
     var tasto: TastoDettatura!
     var tastiera: Tastiera!
+    var call: GestoreCall!
+    var scorciatoie: Scorciatoie!
+    var voceStatoCall: NSMenuItem!
+    var orologioMenu: Timer?
 
     func applicationWillFinishLaunching(_ n: Notification) {
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(apriURL(_:risposta:)),
@@ -57,6 +62,9 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         pillola.cambiato = { _ in c.scriviStato() }
         pillola.clicDestro = { [weak self] in self?.apriFinestra() }
         pillola.clic = { [weak self] zona in self?.clicPillola(zona) }
+        call = GestoreCall(pillola: pillola, suoni: suoni, impostazioni: { [unowned self] in self.imp },
+                           dettaturaOccupata: { [unowned self] in self.dettatura.occupata })
+        call.cambiato = { [weak self] in self?.aggiornaMenuCall(); c.scriviStato() }
         dettatura.senzaIncollaFino = { c.senzaIncollaFino }
         dettatura.cambiato = { c.scriviStato() }
         c.detta = { [weak self] in self?.dettatura.iniziaManiLibere() }
@@ -65,10 +73,12 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         c.extra = { [weak self] in
             guard let self else { return [:] }
             return ["ultimoIncollato": self.dettatura.ultimoIncollato ?? NSNull(), "registroTasto": self.tasto.registro,
-                    "callInCorso": false, "tastieraAttiva": self.tastiera.attiva, "eventiTastiera": self.tastiera.eventi,
+                    "callInCorso": self.call.inCorso, "tastieraAttiva": self.tastiera.attiva, "eventiTastiera": self.tastiera.eventi,
                     "accessibilita": AXIsProcessTrusted()]
         }
         pillola.mostra(.riposo)
+        call.avvia()
+        creaScorciatoie()
         controllaAccessibilita()
         urlInAttesa.forEach(c.gestisci)
         urlInAttesa = []
@@ -85,7 +95,7 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
 
     func creaDettatura() {
         dettatura = Dettatura(pillola: pillola, suoni: suoni, whisper: whisper, impostazioni: { [unowned self] in self.imp },
-                              cartellaCall: { nil })
+                              cartellaCall: { [weak self] in self?.call?.cartellaCorrente() })
         tasto = TastoDettatura(azioni: dettatura, pianificatore: PianificatoreVero())
         tastiera = Tastiera(tasto: tasto, quale: { [unowned self] in self.imp.tasto })
         // Impostazioni e dizionario cambiano dal Notetaker: valgono subito.
@@ -97,13 +107,59 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
 
     func clicPillola(_ zona: ZonaPillola) {
         switch pillola.stato {
+        case .domanda:
+            if zona == .si { DispatchQueue.main.async { self.call.avviaChiedendoNome() } }
+            if zona == .no { call.rispostaNo() }
+        case .call, .callSopra:
+            if zona == .stop { call.ferma() }
+        case .sopra where zona == .registraCall:
+            DispatchQueue.main.async { self.call.avviaChiedendoNome() }   // pallino rosso sotto il microfono
         case .riposo, .sopra:
             if zona == .detta || zona == .fondo { dettatura.iniziaManiLibere() }   // dal clic: mani libere
         case .ascolto:
             dettatura.fine(annulla: false)
-        default:
+        case .trascrivo:
             break
         }
+    }
+
+    // MARK: call
+
+    func creaScorciatoie() {
+        scorciatoie = Scorciatoie()
+        let mod = UInt32(controlKey | optionKey | cmdKey)
+        scorciatoie.registra(codice: UInt32(kVK_ANSI_R), modificatori: mod) { [weak self] in
+            DispatchQueue.main.async { self?.call.alterna() }
+        }
+        scorciatoie.registra(codice: UInt32(kVK_ANSI_N), modificatori: mod) { [weak self] in self?.apriFinestra() }
+    }
+
+    @objc func menuCall() { call.alterna() }
+
+    func aggiornaMenuCall() {
+        voceCall.title = call.inCorso ? "Ferma la call" : "Registra una call"
+        voceStatoCall.isHidden = !call.inCorso
+        aggiornaRigaCall()
+    }
+
+    func aggiornaRigaCall() {
+        guard call.inCorso else { return }
+        let chi = call.nome.isEmpty ? "" : " con \(call.nome)"
+        voceStatoCall.title = "Registro la call\(chi) — \(Pillola.tempo(da: call.inizio))"
+    }
+
+    // Il tempo nel menu si aggiorna ogni secondo solo mentre il menu è aperto.
+    func menuWillOpen(_ m: NSMenu) {
+        aggiornaMenuCall()
+        guard call.inCorso else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.aggiornaRigaCall() }
+        RunLoop.main.add(t, forMode: .common)
+        orologioMenu = t
+    }
+
+    func menuDidClose(_ m: NSMenu) {
+        orologioMenu?.invalidate()
+        orologioMenu = nil
     }
 
     @objc func menuDetta() {
@@ -134,18 +190,24 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
             b.image?.isTemplate = true
         }
         let m = NSMenu()
+        m.delegate = self
+        voceStatoCall = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        voceStatoCall.isEnabled = false
+        voceStatoCall.isHidden = true
         voceAccessibilita = NSMenuItem(title: "Manca il permesso di Accessibilità: aprilo",
                                        action: #selector(apriAccessibilita), keyEquivalent: "")
         voceAccessibilita.target = self
         voceAccessibilita.isHidden = true
         m.addItem(voceAccessibilita)
+        m.addItem(voceStatoCall)
         let apri = NSMenuItem(title: "Apri Notetaker", action: #selector(apriFinestra), keyEquivalent: "")
         apri.target = self
         m.addItem(apri)
         voceDetta = NSMenuItem(title: "Detta", action: #selector(menuDetta), keyEquivalent: "")
         voceDetta.target = self
         m.addItem(voceDetta)
-        voceCall = NSMenuItem(title: "Registra una call", action: nil, keyEquivalent: "")
+        voceCall = NSMenuItem(title: "Registra una call", action: #selector(menuCall), keyEquivalent: "")
+        voceCall.target = self
         m.addItem(voceCall)
         m.addItem(.separator())
         m.addItem(NSMenuItem(title: "Esci da Notetaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
