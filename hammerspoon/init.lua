@@ -18,13 +18,13 @@ local FFMPEG = "/opt/homebrew/bin/ffmpeg"
 local SERVER = "/opt/homebrew/bin/whisper-server"
 local CURL = "/usr/bin/curl"
 local CALL = CARTELLA .. "/call"
-local AUDIO = os.getenv("TMPDIR") .. "dettatura.wav"
+local TMP = os.getenv("TMPDIR")
 local DATI = CARTELLA .. "/dati"
 local PYTHON = CARTELLA .. "/venv/bin/python"
 local NOTETAKER = HOME .. "/Applications/Notetaker.app"
 local SPEGNI_DOPO = 15 * 60  -- secondi senza dettature prima di spegnere il server
-local TIENI = 0.2            -- secondi di Fn premuto prima che parta la dettatura
-local DOPPIO = 0.6           -- tempo massimo tra l'inizio di due tocchi di Fn per le mani libere
+local TIENI = 0.3            -- sotto: è un tocco; sopra: dettatura col tasto tenuto (il microfono parte subito comunque)
+local DOPPIO = 0.7           -- tempo massimo tra l'inizio di due tocchi di Fn per le mani libere
 
 D = {}                       -- globale, per le prove con `hs -c`
 D.stato = "riposo"           -- riposo | sopra | ascolto | trascrivo | domanda | call
@@ -66,6 +66,23 @@ local function aggiornaPrompt()
 end
 aggiornaPrompt()
 D.prompt = function() return promptWhisper end
+
+---------------------------------------------------------------- timer
+-- Un timer non tenuto in una variabile può essere eliminato da Hammerspoon prima di scattare:
+-- dopo() e aspetta() lo tengono vivo finché non ha fatto il suo lavoro.
+local VIVI = {}
+local function dopo(secondi, fn)
+  local t
+  t = hs.timer.doAfter(secondi, function() VIVI[t] = nil; fn() end)
+  VIVI[t] = true
+  return t
+end
+local function aspetta(condizione, fn, passo)
+  local t
+  t = hs.timer.waitUntil(condizione, function() VIVI[t] = nil; fn() end, passo)
+  VIVI[t] = true
+  return t
+end
 
 ---------------------------------------------------------------- suoni
 local SUONI = {}
@@ -353,7 +370,7 @@ local function incolla(t)
   hs.pasteboard.setContents(t)
   hs.eventtap.keyStroke({ "cmd" }, "v", 0)
   suona("incolla")
-  hs.timer.doAfter(0.8, function() if prima then hs.pasteboard.setContents(prima) end end)
+  dopo(0.8, function() if prima then hs.pasteboard.setContents(prima) end end)
 end
 
 local function tornaARiposo()
@@ -379,25 +396,25 @@ local function finisciTesto(grezzo, app, durata)
   t:setWorkingDirectory(CARTELLA)
   t:setInput(grezzo)
   if not t:start() then chiudi(grezzo) end
-  hs.timer.doAfter(1.5, function() chiudi(grezzo) end)
+  dopo(1.5, function() chiudi(grezzo) end)
 end
 
-local function trascrivi(tentativo)
+local function trascrivi(file, app, durata, tentativo)
   tentativo = tentativo or 1
-  local app, durata = appDettatura, inizioDettatura and (hs.timer.secondsSinceEpoch() - inizioDettatura) or 0
   hs.task.new(CURL, function(codice, out, _)
     if codice ~= 0 or not out or out == "" then
       if tentativo < 20 then
-        hs.timer.doAfter(1, function() trascrivi(tentativo + 1) end) -- il server si sta ancora avviando
+        dopo(1, function() trascrivi(file, app, durata, tentativo + 1) end) -- il server sta partendo
       else
-        hs.alert.show("Dettatura: trascrizione non riuscita"); tornaARiposo()
+        hs.alert.show("Dettatura: trascrizione non riuscita"); tornaARiposo(); os.remove(file)
       end
       return
     end
+    os.remove(file)
     local t = pulisci(out)
     if t ~= "" then finisciTesto(t, app, durata) else tornaARiposo() end
     rinviaSpegnimento()
-  end, { "-s", "--max-time", "60", "-F", "file=@" .. AUDIO, "-F", "response_format=text",
+  end, { "-s", "--max-time", "60", "-F", "file=@" .. file, "-F", "response_format=text",
          "-F", "temperature=0", "--form-string", "prompt=" .. promptWhisper,
          "http://127.0.0.1:" .. PORTA .. "/inference" }):start()
 end
@@ -414,62 +431,140 @@ function segnaDettaturaInCall(da, a)  -- a = nil: la dettatura è appena iniziat
   if out then out:write(hs.json.encode({ da = da, a = a }), "\n"); out:close() end
 end
 
-local function iniziaDettatura(libere)
-  if registrazione or D.stato == "trascrivo" then return end
-  maniLibere = libere and true or false
+-- Il microfono del Mac impiega 0,3-0,9 s ad accendersi: la cattura parte appena si preme il tasto,
+-- e suono e pillola "in ascolto" arrivano solo con il primo audio vero, così non si perde l'inizio.
+-- Una cattura non confermata (un tocco, Fn+altro tasto) si butta senza suoni.
+local cattura = nil   -- { task, file, avvio, confermata, pronta, segnalata }
+local nCattura = 0
+D.registroFn = {}     -- ultimi eventi del tasto, per capire i casi strani: hs -c 'hs.inspect(D.registroFn)'
+local function annota(evento)
+  local r = D.registroFn
+  r[#r + 1] = string.format("%.3f %s", hs.timer.secondsSinceEpoch() % 1000, evento)
+  if #r > 60 then table.remove(r, 1) end
+end
+
+local function segnalaAscolto(c)  -- suono e pillola: solo quando la cattura è confermata e l'audio arriva
+  if not c or c ~= cattura or not c.confermata or not c.pronta or c.segnalata then return end
+  c.segnalata = true
+  suona(maniLibere and "blocco" or "avvio")
+  mostra("ascolto")
+  annota("in ascolto")
+end
+
+local function avviaCattura()
+  if cattura or D.stato == "trascrivo" then return end
   avviaServer()
   local mic = hs.audiodevice.defaultInputDevice()
   if IMP.microfono ~= "" then mic = hs.audiodevice.findInputByName(IMP.microfono) or mic end
   local nome = mic and mic:name() or "default"
-  os.remove(AUDIO)
-  inizioDettatura = hs.timer.secondsSinceEpoch()
-  segnaDettaturaInCall(inizioDettatura, nil)
-  local fronte = hs.application.frontmostApplication()
-  appDettatura = fronte and fronte:name() or ""
+  nCattura = nCattura + 1
+  local c = { file = TMP .. "dettatura-" .. nCattura .. ".wav", avvio = hs.timer.secondsSinceEpoch() }
   livello = 0
-  registrazione = hs.task.new(FFMPEG, nil, function(_, out, _)
+  c.task = hs.task.new(FFMPEG, nil, function(_, out, _)
     for db in (out or ""):gmatch("RMS_level=(%-?[%d%.]+)") do
       local v = math.max(0, math.min(1, (tonumber(db) + 58) / 38))
       livello = livello * 0.35 + v * 0.65
     end
+    if not c.pronta and c == cattura then c.pronta = true; annota("primo audio"); segnalaAscolto(c) end
     return true
   end, { "-nostdin", "-loglevel", "error", "-y", "-f", "avfoundation", "-i", ":" .. nome,
          "-filter_complex", "[0:a]aresample=16000,aformat=channel_layouts=mono,asplit=2[o][m];" ..
          "[m]asetnsamples=n=1000,astats=metadata=1:reset=1," ..
          "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=/dev/stdout:direct=1,anullsink",
-         "-map", "[o]", AUDIO })
-  registrazione:start()
-  suona(maniLibere and "blocco" or "avvio")
-  mostra("ascolto")
+         "-map", "[o]", c.file })
+  cattura = c
+  c.task:start()
+  annota("cattura avviata")
+end
+
+local function annullaCattura()  -- solo per catture non confermate: niente suoni, niente file
+  local c = cattura
+  if not c or c.confermata then return end
+  cattura = nil
+  c.task:interrupt()
+  aspetta(function() return not c.task:isRunning() end, function() os.remove(c.file) end, 0.05)
+  annota("cattura buttata")
+end
+
+local function confermaDettatura(libere)
+  if not cattura then avviaCattura() end
+  local c = cattura
+  if not c or c.confermata then return end
+  c.confermata = true
+  registrazione = c.task
+  maniLibere = libere and true or false
+  inizioDettatura = c.avvio
+  segnaDettaturaInCall(inizioDettatura, nil)
+  local fronte = hs.application.frontmostApplication()
+  appDettatura = fronte and fronte:name() or ""
+  annota(maniLibere and "confermata: mani libere" or "confermata: tasto tenuto")
+  segnalaAscolto(c)
+end
+
+local function iniziaDettatura(libere)
+  if registrazione or D.stato == "trascrivo" then return end
+  confermaDettatura(libere)
 end
 
 local function fineDettatura(annulla)
-  if not registrazione then return end
-  local r = registrazione
-  registrazione, maniLibere = nil, false
-  r:interrupt()
+  local c = cattura
+  if not c then return end
+  if not c.confermata then annullaCattura(); return end
+  cattura, registrazione, maniLibere = nil, nil, false
+  c.task:interrupt()
   segnaDettaturaInCall(inizioDettatura, hs.timer.secondsSinceEpoch())
+  local durata = hs.timer.secondsSinceEpoch() - c.avvio
+  annota(annulla and "annullata" or "finita")
   if annulla then suona("annulla"); tornaARiposo() else suona("stop"); mostra("trascrivo") end
-  hs.timer.waitUntil(function() return not r:isRunning() end, function()
-    if annulla then os.remove(AUDIO) return end
-    local a = hs.fs.attributes(AUDIO)
-    if a and a.size > 16000 then trascrivi() else tornaARiposo() end
+  aspetta(function() return not c.task:isRunning() end, function()
+    if annulla then os.remove(c.file) return end
+    local a = hs.fs.attributes(c.file)
+    if a and a.size > 16000 then trascrivi(c.file, appDettatura, durata) else os.remove(c.file); tornaARiposo() end
   end, 0.05)
 end
 D.iniziaDettatura, D.fineDettatura = iniziaDettatura, fineDettatura
 
 -- Tasto di dettatura (Fn, keyCode 63, oppure Option destro, keyCode 61, dalle impostazioni):
--- tenuto = dettatura; due tocchi = mani libere; Esc = annulla.
+-- tenuto = dettatura; due tocchi = mani libere (un altro tocco finisce); Esc = annulla.
 local TASTI = { fn = { codice = 63, flag = "fn" }, option_destro = { codice = 61, flag = "alt" } }
-local fnGiu, fnDa, ultimoTocco, altroTasto = false, 0, 0, false
+local fnGiu, fnDa, ultimoTocco, altroTasto, pressione = false, 0, 0, false, 0
 local tipi = hs.eventtap.event.types
+-- I timer vanno tenuti in variabili: se no Hammerspoon può eliminarli prima che scattino.
+local timerTieni, timerDoppio = nil, nil
+local sorveglia = nil  -- mentre il tasto è giù: se macOS perde l'evento di rilascio, lo si vede dallo stato reale
+
+local function rilascio(ora)
+  fnGiu = false
+  if sorveglia then sorveglia:stop(); sorveglia = nil end
+  if fnDa < 0 then return end                                   -- pressione che ha chiuso le mani libere
+  if registrazione and not maniLibere then
+    fineDettatura(altroTasto)                                   -- fine della dettatura col tasto tenuto
+  elseif not altroTasto and ora - fnDa < TIENI then             -- è stato un tocco
+    if fnDa - ultimoTocco < DOPPIO then
+      ultimoTocco = 0
+      annota("doppio tocco")
+      confermaDettatura(true)                                   -- la cattura è già accesa: niente attesa
+    else
+      ultimoTocco = fnDa
+      annota("primo tocco")
+      local id = pressione
+      if timerDoppio then timerDoppio:stop() end
+      timerDoppio = hs.timer.doAfter(DOPPIO, function()         -- nessun secondo tocco: si butta la cattura
+        if pressione == id and not fnGiu then annullaCattura() end
+      end)
+    end
+  else
+    annullaCattura()
+  end
+end
+
 tastoFn = hs.eventtap.new({ tipi.flagsChanged, tipi.keyDown }, function(e)
   if e:getType() == tipi.keyDown then
     local k = e:getKeyCode()
     if registrazione and k == 53 then fineDettatura(true); return true end   -- Esc
     if fnGiu then
       altroTasto = true                                                       -- Fn+altro tasto: non è dettatura
-      if registrazione and not maniLibere then fineDettatura(true) end
+      if registrazione and not maniLibere then fineDettatura(true) else annullaCattura() end
     end
     return false
   end
@@ -477,27 +572,27 @@ tastoFn = hs.eventtap.new({ tipi.flagsChanged, tipi.keyDown }, function(e)
   if e:getKeyCode() ~= tasto.codice then return false end
   local giu = e:getFlags()[tasto.flag] and true or false
   local ora = hs.timer.secondsSinceEpoch()
-  if giu and fnGiu and not registrazione and ora - fnDa < TIENI then
-    -- macOS a volte perde il rilascio di un tocco rapidissimo: il nuovo "giù" vale come secondo tocco.
-    fnGiu = false
-    if fnDa - ultimoTocco < DOPPIO then ultimoTocco = 0; iniziaDettatura(true); fnDa = -1; fnGiu = true; return false end
-    ultimoTocco = fnDa
-  end
+  annota(giu and "giù" or "su")
+  if giu and fnGiu then rilascio(ora) end    -- macOS a volte perde il rilascio di un tocco rapidissimo
   if giu and not fnGiu then
     fnGiu, fnDa, altroTasto = true, ora, false
+    pressione = pressione + 1
     if registrazione and maniLibere then fineDettatura(false); fnDa = -1; return false end
-    hs.timer.doAfter(TIENI, function()
-      if fnGiu and not altroTasto and not registrazione and fnDa > 0 then iniziaDettatura(false) end
+    avviaCattura()                           -- il microfono si accende subito (se non è già acceso)
+    local id = pressione
+    if sorveglia then sorveglia:stop() end
+    sorveglia = hs.timer.doEvery(0.05, function()
+      if pressione == id and fnGiu and not hs.eventtap.checkKeyboardModifiers()[tasto.flag] then
+        annota("su perso: rilascio dallo stato dei tasti")
+        rilascio(hs.timer.secondsSinceEpoch())
+      end
+    end)
+    if timerTieni then timerTieni:stop() end
+    timerTieni = hs.timer.doAfter(TIENI, function()  -- ancora giù dopo TIENI, stessa pressione: dettatura col tasto
+      if pressione == id and fnGiu and not altroTasto and not registrazione then confermaDettatura(false) end
     end)
   elseif not giu and fnGiu then
-    fnGiu = false
-    if fnDa < 0 then return false end
-    if registrazione and not maniLibere then
-      fineDettatura(altroTasto)
-    elseif not altroTasto and ora - fnDa < TIENI then                         -- è stato un tocco
-      if fnDa - ultimoTocco < DOPPIO then ultimoTocco = 0; iniziaDettatura(true)
-      else ultimoTocco = fnDa end
-    end
+    rilascio(ora)
   end
   return false
 end)
@@ -587,7 +682,7 @@ end)
 
 -- Ogni 2 secondi: un'app di call sta usando il microfono? Dopo qualche secondo la pillola chiede.
 controlloMic = hs.timer.doEvery(2, function()
-  if registrazione or D.stato == "trascrivo" or callInizio then micDa = nil; return end
+  if registrazione or cattura or D.stato == "trascrivo" or callInizio then micDa = nil; return end
   local mic = hs.audiodevice.defaultInputDevice()
   local inUso = mic and mic:inUse()
   if not inUso then
