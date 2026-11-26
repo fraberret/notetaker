@@ -1,4 +1,4 @@
-"""Comandi del Notetaker per il comando `call` e per Hammerspoon.
+"""Comandi del Notetaker per il comando `call` e per la pillola.
 
   python -m nt.cli rileggi <cartella>        rilegge trascrizione.txt con Claude (esce 2 se non riesce)
   python -m nt.cli applica                   stdin → stdout con il dizionario applicato

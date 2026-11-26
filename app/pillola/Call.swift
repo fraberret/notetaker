@@ -117,7 +117,10 @@ final class GestoreCall {
 
     func avviaChiedendoNome() {
         guard !inCorso else { return }
+        let precedente = NSWorkspace.shared.frontmostApplication
         NSApp.activate(ignoringOtherApps: true)
+        // Dopo la finestrella si torna all'app in cui si era (la call), non al Notetaker.
+        defer { if let p = precedente, p != NSRunningApplication.current { p.activate() } }
         let a = NSAlert()
         a.messageText = "Trascrivi la call"
         a.informativeText = "Con chi è la call? (più persone: Marco, Giulia)"

@@ -1,5 +1,5 @@
 """Dettature fatte durante una call: il microfono è condiviso, quindi quello che l'utente detta alla
-pillola finirebbe anche nella call. Hammerspoon annota gli intervalli (secondi epoch) in
+pillola finirebbe anche nella call. La pillola annota gli intervalli (secondi epoch) in
 <cartella della call>/dettature-in-call.jsonl; diretta e trascrizione finale tolgono i pezzi "Io" lì dentro.
 Solo libreria standard: lo usa anche unisci.py, che gira con il Python di sistema.
 """

@@ -74,7 +74,7 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
             guard let self else { return [:] }
             return ["ultimoIncollato": self.dettatura.ultimoIncollato ?? NSNull(), "registroTasto": self.tasto.registro,
                     "callInCorso": self.call.inCorso, "tastieraAttiva": self.tastiera.attiva, "eventiTastiera": self.tastiera.eventi,
-                    "accessibilita": AXIsProcessTrusted()]
+                    "accessibilita": AXIsProcessTrusted(), "registrazioneSchermo": CGPreflightScreenCaptureAccess()]
         }
         pillola.mostra(.riposo)
         call.avvia()
@@ -166,13 +166,32 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         if dettatura.registrando { dettatura.fine(annulla: false) } else { dettatura.iniziaManiLibere() }
     }
 
-    /// Lanciata da macOS al login: niente finestra, solo icona e pillola.
+    /// Lanciata da macOS al login: niente finestra, solo icona e pillola. Gli elementi login di SMAppService
+    /// non sempre passano il segnale di macOS: vale anche un avvio nei primi 3 minuti dall'accesso alla sessione.
     func controllaLancioAlLogin() {
-        guard let e = NSAppleEventManager.shared().currentAppleEvent else { return }
-        if e.eventID == AEEventID(kAEOpenApplication),
+        if let e = NSAppleEventManager.shared().currentAppleEvent, e.eventID == AEEventID(kAEOpenApplication),
            e.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem) {
             lanciataAlLogin = true
         }
+        if let accesso = Self.accessoSessione(), Date().timeIntervalSince(accesso) < 180 { lanciataAlLogin = true }
+    }
+
+    /// Quando l'utente è entrato nella sessione grafica (riga "console" di utmpx).
+    static func accessoSessione() -> Date? {
+        let utente = NSUserName()
+        var trovato: Date?
+        setutxent()
+        while let r = getutxent() {
+            var v = r.pointee
+            guard v.ut_type == USER_PROCESS else { continue }
+            let riga = withUnsafeBytes(of: &v.ut_line) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            let chi = withUnsafeBytes(of: &v.ut_user) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if riga == "console" && chi == utente {
+                trovato = Date(timeIntervalSince1970: TimeInterval(v.ut_tv.tv_sec))
+            }
+        }
+        endutxent()
+        return trovato
     }
 
     @objc func apriURL(_ e: NSAppleEventDescriptor, risposta: NSAppleEventDescriptor) {

@@ -34,4 +34,4 @@ PLIST="$HOME/Library/LaunchAgents/it.notetaker.manutenzione.plist"
 sed "s|__BASE__|$B|g" it.notetaker.manutenzione.plist >"$PLIST"
 launchctl bootout "gui/$(id -u)/it.notetaker.manutenzione" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "Fatto. Mancano i modelli (vedi README) e la configurazione di Hammerspoon (hammerspoon/init.lua)."
+echo "Fatto. Mancano i modelli (vedi README). Apri Notetaker da ~/Applications e dai i permessi (Accessibilità, Microfono, Registrazione schermo)."

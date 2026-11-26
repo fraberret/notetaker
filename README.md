@@ -4,7 +4,7 @@ Dettatura e trascrizione delle call **in locale su macOS**, con un'app per ritro
 
 - **Dettatura**: tieni premuto Fn (o Option destro), parli, il testo viene incollato dove c'è il cursore. Whisper gira sul Mac; ogni dettatura passa dal dizionario e finisce in uno storico.
 - **Call**: registra il microfono e l'audio della call, mostra il testo **in diretta** mentre si parla, poi fa la versione finale con le persone separate ("Io" e il nome dato; con più nomi, "Marco, Giulia", riconosce chi parla: "Persona 1", "Persona 2"…), la fa rileggere a Claude (punteggiatura, "?", nomi, email, cifre) e scrive le note della call.
-- **App Notetaker**: elenco delle call con audio (clic sull'orario = salto nell'audio), riassunto, trascrizione a colori per persona, correzioni, "Chiedi a Claude"; storico delle dettature; dizionario; impostazioni; ricerca.
+- **App Notetaker**: un'app sola, sempre accesa con un'icona nella barra dei menu e una **pillola** sul bordo destro dello schermo (dettatura, domanda "la trascrivo?" quando un'app di call usa il microfono, pulsante per registrare). Nella finestra: elenco delle call con audio (clic sull'orario = salto nell'audio), riassunto, trascrizione a colori per persona, correzioni, "Chiedi a Claude"; storico delle dettature; dizionario; impostazioni; ricerca.
 
 Tutto resta sul Mac. L'unica cosa che esce è il **testo delle call** mandato a Claude per la rilettura, le note e le domande (si può spegnere nelle impostazioni).
 
@@ -18,8 +18,9 @@ Tutto resta sul Mac. L'unica cosa che esce è il **testo delle call** mandato a 
 | `voci.py`, `trascrivi_tratti.py`, `unisci.py` | versione finale: con più persone chi parla (sherpa-onnx) e trascrizione per intervento (whisper.cpp), turni "[mm:ss] Chi: testo" |
 | `nt/rilettura.py`, `prompt-rilettura.md` | rilettura con Claude a pezzi, con controllo che righe, orari e persone restino uguali |
 | `nt/dizionario.py` | sostituzioni "sbagliato → giusto" a parola intera e termini suggeriti a Whisper; le regole nuove entrano solo con il tuo ok |
-| `app/` | motore locale (`server.py`, solo 127.0.0.1 con gettone), interfaccia (`index.html`), guscio macOS (`Notetaker.swift`, `build.sh`) |
-| `hammerspoon/init.lua` | la pillola sul bordo dello schermo: dettatura, domanda "la trascrivo?" quando un'app di call usa il microfono |
+| `app/` | motore locale (`server.py`, solo 127.0.0.1 con gettone), interfaccia (`index.html`), app macOS (`Notetaker.swift`, `main.swift`, `build.sh`) |
+| `app/pillola/` | la pillola in Swift: tasto di dettatura, cattura, whisper-server, dizionario e incolla, domanda e registrazione delle call, scorciatoie |
+| `hammerspoon/init.lua` | versione precedente della pillola (Hammerspoon), non più necessaria |
 | `it.notetaker.manutenzione.plist` | ogni 30 minuti: riprova le riletture in attesa, cancella gli audio più vecchi di quanto impostato |
 
 Se Claude non risponde, la call aspetta e si riprova; dopo 24 ore entra la versione grezza, segnata "da rileggere". Le trascrizioni nel vault non vengono mai modificate: correzioni e nomi stanno nei dati dell'app.
@@ -28,9 +29,8 @@ Se Claude non risponde, la call aspetta e si riprova; dopo 24 ore entra la versi
 
 - Mac con Apple Silicon, macOS 15 o successivo
 - [Homebrew](https://brew.sh): `brew install whisper-cpp ffmpeg uv`
-- [Hammerspoon](https://www.hammerspoon.org) per la pillola e la dettatura
 - [Claude Code](https://claude.com/claude-code) (`claude` in `~/.local/bin`) per rilettura e note; facoltativo
-- Permessi di macOS: Microfono, Registrazione schermo e audio di sistema, Accessibilità (per Hammerspoon)
+- Permessi di macOS per Notetaker: Accessibilità (tasto di dettatura, Esc, incolla), Microfono, Registrazione schermo e audio di sistema (registrazione delle call)
 
 ### Modelli
 
@@ -51,8 +51,10 @@ zsh installa.sh
 Poi:
 
 1. scrivi i tuoi dati in `dati/profilo.json` (nome, una riga su di te per i prompt di Claude, cartella del vault, termini fissi del dizionario);
-2. copia `hammerspoon/init.lua` in `~/.hammerspoon/init.lua` (o unisci le parti che ti servono);
-3. apri Notetaker da `~/Applications`.
+2. facoltativo ma consigliato, prima di `installa.sh` o di `zsh app/build.sh`: `zsh app/certificato.sh` crea un certificato di firma locale ("Notetaker locale"); con quello macOS non richiede i permessi a ogni ricompilazione;
+3. apri Notetaker da `~/Applications` e dai i permessi: se manca l'Accessibilità, il menu dell'icona lo dice e porta alle Impostazioni.
+
+Il Notetaker parte da solo al login (si spegne dalle impostazioni dell'app). Chiudere la finestra la nasconde; **Cmd+Q** spegne tutto, pillola compresa. Scorciatoie: Ctrl+Option+Cmd+R avvia o ferma la registrazione di una call, Ctrl+Option+Cmd+N apre la finestra; clic destro sulla pillola apre la finestra.
 
 Le trascrizioni vanno in `<vault>/90 Fonti/Trascrizioni/`, le note delle call in `<vault>/00 Inbox/`. Tutti i dati dell'app (dettature, dizionario, correzioni, impostazioni) stanno in `dati/`, fuori dal repository.
 
@@ -61,9 +63,13 @@ Le trascrizioni vanno in `<vault>/90 Fonti/Trascrizioni/`, le note delle call in
 ```zsh
 venv/bin/python -m pytest -q
 zsh tests/test_pipeline.sh
+zsh tests/test_swift.sh     # logica della pillola: tasto, pulizia del testo, impostazioni
+zsh tests/test_pillola.sh   # con l'app accesa: una dettatura vera, detta dagli altoparlanti, senza incollare
 ```
 
-Le prove usano sempre cartelle temporanee (`CALL_DESTINAZIONE`, `CALL_NOTE_DESTINAZIONE`, `CALL_DATI`, `CALL_REGISTRAZIONI`, `CALL_STATO`) e un Claude finto (`CALL_CLAUDE=tests/finto_claude.sh`).
+Le prove usano sempre cartelle temporanee (`CALL_DESTINAZIONE`, `CALL_NOTE_DESTINAZIONE`, `CALL_DATI`, `CALL_REGISTRAZIONI`, `CALL_STATO`) e un Claude finto (`CALL_CLAUDE=tests/finto_claude.sh`); per l'app si passano con `open -n --env NOME=valore ~/Applications/Notetaker.app`.
+
+La pillola si pilota con comandi `notetaker://`, accettati solo dopo `open -g "notetaker://senza-incolla?secondi=120"` e fino a quella scadenza (così una prova dimenticata non blocca la dettatura): `mostra?stato=domanda`, `foto?file=/tmp/p.png`, `detta`, `fine`, `annulla`. Lo stato si legge in `stato-pillola.json`.
 
 ## Nota sul consenso
 
