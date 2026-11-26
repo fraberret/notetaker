@@ -650,7 +650,7 @@ local function callAttiva()
 end
 
 local function avviaCall()
-  local bottone, nome = hs.dialog.textPrompt("Trascrivi la call", "Con chi è la call?", "", "Avvia", "Annulla")
+  local bottone, nome = hs.dialog.textPrompt("Trascrivi la call", "Con chi è la call? (più persone: Marco, Giulia)", "", "Avvia", "Annulla")
   if bottone ~= "Avvia" then micIgnora = true; mostra("riposo"); return end
   nome = nome:gsub('[%$`"\\/:%*%?<>|#%^%[%]]', ""):gsub("^%s+", ""):gsub("%s+$", "")
   if nome == "" then nome = "Interlocutore" end

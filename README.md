@@ -3,7 +3,7 @@
 Dettatura e trascrizione delle call **in locale su macOS**, con un'app per ritrovare tutto e un dizionario personale che impara dalle correzioni. Pensato per chi lavora in italiano e tiene gli appunti in un vault Obsidian.
 
 - **Dettatura**: tieni premuto Fn (o Option destro), parli, il testo viene incollato dove c'è il cursore. Whisper gira sul Mac; ogni dettatura passa dal dizionario e finisce in uno storico.
-- **Call**: registra il microfono e l'audio della call, mostra il testo **in diretta** mentre si parla, poi fa la versione finale con le persone separate ("Io", "Persona 1", "Persona 2"…), la fa rileggere a Claude (punteggiatura, "?", nomi, email, cifre) e scrive le note della call.
+- **Call**: registra il microfono e l'audio della call, mostra il testo **in diretta** mentre si parla, poi fa la versione finale con le persone separate ("Io" e il nome dato; con più nomi, "Marco, Giulia", riconosce chi parla: "Persona 1", "Persona 2"…), la fa rileggere a Claude (punteggiatura, "?", nomi, email, cifre) e scrive le note della call.
 - **App Notetaker**: elenco delle call con audio (clic sull'orario = salto nell'audio), riassunto, trascrizione a colori per persona, correzioni, "Chiedi a Claude"; storico delle dettature; dizionario; impostazioni; ricerca.
 
 Tutto resta sul Mac. L'unica cosa che esce è il **testo delle call** mandato a Claude per la rilettura, le note e le domande (si può spegnere nelle impostazioni).
@@ -15,7 +15,7 @@ Tutto resta sul Mac. L'unica cosa che esce è il **testo delle call** mandato a 
 | `registra.swift` | registra microfono e audio di sistema su due file (ScreenCaptureKit) |
 | `call` | comando zsh: `call avvia "Nome"`, `call ferma`, `call stato`, `call trascrivi`, `call riprova`, `call pulisci` |
 | `diretta.py`, `nt/diretta.py`, `nt/caf.py` | diretta durante la call: legge i file mentre crescono, taglia sulle pause, trascrive con Parakeet |
-| `voci.py`, `trascrivi_tratti.py`, `unisci.py` | versione finale: chi parla (sherpa-onnx), trascrizione per intervento (whisper.cpp), turni "[mm:ss] Chi: testo" |
+| `voci.py`, `trascrivi_tratti.py`, `unisci.py` | versione finale: con più persone chi parla (sherpa-onnx) e trascrizione per intervento (whisper.cpp), turni "[mm:ss] Chi: testo" |
 | `nt/rilettura.py`, `prompt-rilettura.md` | rilettura con Claude a pezzi, con controllo che righe, orari e persone restino uguali |
 | `nt/dizionario.py` | sostituzioni "sbagliato → giusto" a parola intera e termini suggeriti a Whisper; le regole nuove entrano solo con il tuo ok |
 | `app/` | motore locale (`server.py`, solo 127.0.0.1 con gettone), interfaccia (`index.html`), guscio macOS (`Notetaker.swift`, `build.sh`) |

@@ -85,6 +85,11 @@ completa() {
   notifica "Trascrizione pronta: $nome"
 }
 
+# Quante persone ci sono oltre a me, dai nomi dati all'avvio: "Marco" = 1, "Marco, Giulia" o "Marco e Giulia" = 2.
+quante_persone() {
+  print -r -- "$1" | sed -E 's/ +(e|ed|&|\+) +/,/g' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -c .
+}
+
 trascrivi() {
   local dir="$1" nome="${2:-Interlocutore}"
   local log="$dir/trascrizione.log"
@@ -100,9 +105,15 @@ trascrivi() {
       whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/microfono" -f "$dir/microfono.wav" >/dev/null 2>>"$log.whisper"
       echo "Fatta la traccia microfono: $(date)"
     fi
-    # Gli altri (audio della call): prima chi parla e quando, poi ogni intervento trascritto a parte.
-    if [[ -s "$dir/sistema.wav" ]]; then
-      "$BASE/venv/bin/python" "$BASE/voci.py" "$dir/sistema.wav" "$dir/sistema.voci.json" && echo "Voci riconosciute: $(date)"
+    # Gli altri (audio della call). Con una persona sola (un nome) tutto l'audio è suo: una passata unica.
+    # Con più nomi ("Marco, Giulia" o "Marco e Giulia") prima chi parla e quando, poi ogni intervento a parte.
+    local persone; persone=$(quante_persone "$nome")
+    if [[ -s "$dir/sistema.wav" && "$persone" -le 1 ]]; then
+      rm -f "$dir/sistema.voci.json"
+      whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
+      echo "Una persona sola: fatta la traccia sistema intera: $(date)"
+    elif [[ -s "$dir/sistema.wav" ]]; then
+      "$BASE/venv/bin/python" "$BASE/voci.py" "$dir/sistema.wav" "$dir/sistema.voci.json" "$persone" && echo "Voci riconosciute ($persone persone): $(date)"
       if [[ -s "$dir/sistema.voci.json" ]] && [[ "$(cat "$dir/sistema.voci.json")" != "[]" ]] && \
          "$BASE/venv/bin/python" "$BASE/trascrivi_tratti.py" "$dir/sistema.wav" "$dir/sistema.voci.json" "$dir/sistema.json"; then
         echo "Fatta la traccia sistema per interventi: $(date)"
