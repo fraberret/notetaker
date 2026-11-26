@@ -1,0 +1,21 @@
+# Ambiente e modelli (si scaricano, vedi README)
+venv/
+modelli/
+__pycache__/
+.pytest_cache/
+.superpowers/
+
+# Dati personali: registrazioni, dettature, dizionario, profilo (mai nel repository)
+/dati/
+/registrazioni/
+/stato
+/manutenzione.log
+*.caf
+*.wav
+*.m4a
+
+# Documenti di progetto con dati personali: solo in locale
+/docs/
+
+# Registratore compilato su ogni Mac da registra.swift (installa.sh)
+/registra

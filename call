@@ -1,0 +1,223 @@
+#!/bin/zsh
+# call: registra e trascrive in locale le call fatte dal Mac.
+#   call avvia [nome interlocutore]   inizia a registrare (microfono + audio della call)
+#   call ferma                        smette di registrare e trascrive (in background, notifica a fine)
+#   call stato                        dice se sta registrando
+#   call trascrivi <cartella> [nome]  rifà la trascrizione di una registrazione già fatta
+#   call riprova                      ritenta la rilettura delle call in attesa (LaunchAgent, ogni 30 min)
+#   call pulisci                      cancella audio delle call e dettature più vecchi di quanto impostato
+set -u
+
+BASE="$HOME/.config/trascrittore"
+REG="${CALL_REGISTRAZIONI:-$BASE/registrazioni}"
+STATO="${CALL_STATO:-$BASE/stato}"
+MODELLO="$HOME/.cache/whisper-cpp/ggml-large-v3-turbo-q5_0.bin"
+VAD="$HOME/.cache/whisper-cpp/ggml-silero-v5.1.2.bin"
+CLAUDE="${CALL_CLAUDE:-$HOME/.local/bin/claude}"
+export PATH="/opt/homebrew/bin:/usr/bin:/bin:$PATH"
+
+nt_cli() { PYTHONPATH="$BASE" "$BASE/venv/bin/python" -m nt.cli "$@"; }
+
+# Il vault viene dal profilo (dati/profilo.json); per le prove si sovrascrive con le variabili.
+VAULT="${NOTETAKER_VAULT:-$(nt_cli profilo vault)}"
+VAULT_TRASCR="${CALL_DESTINAZIONE:-$VAULT/90 Fonti/Trascrizioni}"
+VAULT_INBOX="${CALL_NOTE_DESTINAZIONE:-$VAULT/00 Inbox}"
+
+notifica() {
+  [[ "${CALL_NOTIFICHE:-1}" == "1" ]] || return 0
+  osascript -e "display notification \"$1\" with title \"Trascrittore call\"" 2>/dev/null
+}
+
+pulisci_nome() {
+  # Niente caratteri vietati nei nomi del vault.
+  print -r -- "$1" | tr -d '/\\:*?"<>|#^[]' | sed 's/  */ /g; s/^ //; s/ $//'
+}
+
+# Note automatiche della call (come un note taker), scritte da Claude Code con l'abbonamento.
+note() {
+  local dir="$1" nome="$2" data="$3" titolo="$4" fonte="$5"
+  [[ "${CALL_NOTE:-1}" == "1" && -d "$VAULT_INBOX" ]] || return 0
+  [[ "$(nt_cli impostazione note)" == "true" ]] || return 0
+  [[ -x "$CLAUDE" ]] || return 1
+  local file="$VAULT_INBOX/$data Note call $titolo.md"
+  [[ -e "$file" ]] && file="$VAULT_INBOX/$data Note call $titolo $(date +%H%M).md"
+  local tmp; tmp=$(mktemp -d)
+  {
+    nt_cli prompt-note "$titolo" "$data" "$fonte"
+    echo; echo "<trascrizione>"; cat "$dir/trascrizione.txt"; echo "</trascrizione>"
+  } >"$tmp/richiesta.txt"
+  ( cd "$tmp" && "$CLAUDE" -p --tools "" --strict-mcp-config --no-session-persistence --output-format text \
+      <"$tmp/richiesta.txt" >"$tmp/note.md" 2>"$tmp/errori.txt" )
+  if [[ -s "$tmp/note.md" ]] && ! grep -qi "error" "$tmp/errori.txt"; then
+    cp "$tmp/note.md" "$file"
+    echo "Note salvate: $file"
+    notifica "Note pronte in Inbox: $titolo"
+  else
+    echo "Note non riuscite:"; cat "$tmp/errori.txt"
+    rm -rf "${tmp:?}"
+    return 1
+  fi
+  rm -rf "${tmp:?}"
+}
+
+# Copia nel vault (una sola volta per call), note, pulizia dei file grezzi.
+completa() {
+  local dir="$1" nome="$2"
+  [[ -e "$dir/vault.txt" ]] && { echo "Già nel vault: $(cat "$dir/vault.txt")"; return 0; }
+  local data titolo dest
+  data=$(basename "$dir" | cut -c1-10)
+  titolo=$(pulisci_nome "$nome")
+  dest="$VAULT_TRASCR/$data Trascrizione call $titolo"
+  if [[ -e "$dest.txt" ]]; then
+    dest="$dest $(basename "$dir" | cut -c12-16 | tr -d '-')"
+  fi
+  [[ -d "$VAULT_TRASCR" && -s "$dir/trascrizione.txt" ]] || { echo "Niente da copiare nel vault"; return 1; }
+  cp "$dir/trascrizione.txt" "$dest.txt"
+  [[ -s "$dir/audio.m4a" ]] && cp "$dir/audio.m4a" "$dest.m4a"
+  print -r -- "$dest" >"$dir/vault.txt"
+  echo "Salvata nel vault: $dest.txt"
+  [[ -e "$dir/da-rileggere" ]] && nt_cli da-rileggere "$(basename "$dest")"
+  # I file grezzi non servono più: l'audio resta solo nel vault, la diretta lascia il posto alla versione finale.
+  rm -f "${dir:?}"/*.caf "${dir:?}"/*.wav "${dir:?}/audio.m4a" "${dir:?}/diretta.jsonl"
+  if ! note "$dir" "$nome" "$data" "$titolo" "$(basename "$dest").txt"; then
+    : >"$dir/note-in-attesa"
+  fi
+  notifica "Trascrizione pronta: $nome"
+}
+
+trascrivi() {
+  local dir="$1" nome="${2:-Interlocutore}"
+  local log="$dir/trascrizione.log"
+  print -r -- "$nome" >"$dir/nome.txt"
+  {
+    echo "Trascrizione iniziata: $(date)"
+    for traccia in microfono sistema; do
+      [[ -s "$dir/$traccia.caf" ]] || { echo "Manca $traccia.caf"; continue; }
+      ffmpeg -nostdin -loglevel error -y -i "$dir/$traccia.caf" -ar 16000 -ac 1 -c:a pcm_s16le "$dir/$traccia.wav"
+    done
+    # Io (microfono): una passata sola, con il filtro dei silenzi.
+    if [[ -s "$dir/microfono.wav" ]]; then
+      whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/microfono" -f "$dir/microfono.wav" >/dev/null 2>>"$log.whisper"
+      echo "Fatta la traccia microfono: $(date)"
+    fi
+    # Gli altri (audio della call): prima chi parla e quando, poi ogni intervento trascritto a parte.
+    if [[ -s "$dir/sistema.wav" ]]; then
+      "$BASE/venv/bin/python" "$BASE/voci.py" "$dir/sistema.wav" "$dir/sistema.voci.json" && echo "Voci riconosciute: $(date)"
+      if [[ -s "$dir/sistema.voci.json" ]] && [[ "$(cat "$dir/sistema.voci.json")" != "[]" ]] && \
+         "$BASE/venv/bin/python" "$BASE/trascrivi_tratti.py" "$dir/sistema.wav" "$dir/sistema.voci.json" "$dir/sistema.json"; then
+        echo "Fatta la traccia sistema per interventi: $(date)"
+      else
+        whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
+        echo "Fatta la traccia sistema intera: $(date)"
+      fi
+    fi
+    python3 -I "$BASE/unisci.py" "$dir" "$nome" "$dir/trascrizione.txt"
+
+    # Audio da conservare: un solo file stereo compresso (sinistra = io, destra = l'altra persona).
+    if [[ -s "$dir/microfono.wav" && -s "$dir/sistema.wav" ]]; then
+      ffmpeg -nostdin -loglevel error -y -i "$dir/microfono.wav" -i "$dir/sistema.wav" \
+        -filter_complex "[0:a][1:a]amerge=inputs=2[a]" -map "[a]" -ac 2 -c:a aac -b:a 64k "$dir/audio.m4a"
+    fi
+
+    # Rilettura con Claude prima di entrare nel vault; se non riesce, la call resta in attesa.
+    if nt_cli rileggi "$dir"; then
+      rm -f "$dir/in-attesa"
+      completa "$dir" "$nome"
+    else
+      [[ -e "$dir/in-attesa" ]] || : >"$dir/in-attesa"
+      echo "Rilettura non riuscita: la call resta in attesa (call riprova)"
+      notifica "Trascrizione in attesa di rilettura: $nome"
+    fi
+    echo "Trascrizione finita: $(date)"
+  } >>"$log" 2>&1
+  [[ -s "$dir/trascrizione.txt" ]] || notifica "Trascrizione non riuscita: guarda $log"
+}
+
+# Ritenta le call in attesa di rilettura; dopo 24 ore entra la versione grezza, "da rileggere".
+riprova() {
+  local f dir nome
+  for f in "$REG"/*/in-attesa(N); do
+    dir="${f:h}"; nome=$(cat "$dir/nome.txt" 2>/dev/null || echo Interlocutore)
+    {
+      echo "Riprovo la rilettura: $(date)"
+      if nt_cli rileggi "$dir"; then
+        rm -f "$dir/in-attesa"; completa "$dir" "$nome"
+      elif [[ -n "$(find "$f" -mmin +1440)" ]]; then
+        echo "Più di 24 ore senza rilettura: entra la versione grezza"
+        : >"$dir/da-rileggere"; rm -f "$dir/in-attesa"; completa "$dir" "$nome"
+      fi
+    } >>"$dir/trascrizione.log" 2>&1
+  done
+  # Note non riuscite dopo la copia nel vault: si ritentano per 24 ore, poi si lascia stare.
+  local dest data
+  for f in "$REG"/*/note-in-attesa(N); do
+    dir="${f:h}"; nome=$(cat "$dir/nome.txt" 2>/dev/null || echo Interlocutore)
+    dest=$(cat "$dir/vault.txt"); data=$(basename "$dir" | cut -c1-10)
+    {
+      if note "$dir" "$nome" "$data" "$(pulisci_nome "$nome")" "$(basename "$dest").txt"; then
+        rm -f "$f"
+      elif [[ -n "$(find "$f" -mmin +1440)" ]]; then
+        echo "Note non riuscite per 24 ore: lascio stare"; rm -f "$f"
+      fi
+    } >>"$dir/trascrizione.log" 2>&1
+  done
+}
+
+case "${1:-}" in
+  avvia)
+    if [[ -f "$STATO" ]] && kill -0 "$(sed -n 1p "$STATO")" 2>/dev/null; then
+      echo "Sto già registrando. Prima: call ferma"; exit 1
+    fi
+    nome="${2:-Interlocutore}"
+    dir="$REG/$(date +%Y-%m-%d_%H-%M-%S)"
+    mkdir -p "$dir"
+    nohup "$BASE/registra" "$dir" >"$dir/registra.log" 2>&1 &
+    pid=$!
+    sleep 2
+    if ! kill -0 $pid 2>/dev/null; then
+      echo "La registrazione non è partita:"; cat "$dir/registra.log"; exit 1
+    fi
+    # Diretta: testo della call mentre si parla (bozza con Parakeet), visibile nel Notetaker.
+    PYTHONPATH="$BASE" nohup "$BASE/venv/bin/python" "$BASE/diretta.py" "$dir" >"$dir/diretta.log" 2>&1 &
+    pid_diretta=$!
+    printf '%s\n%s\n%s\n%s\n' "$pid" "$dir" "$nome" "$pid_diretta" >"$STATO"
+    echo "Registrazione avviata ($nome). Ricorda di chiedere il consenso. Per finire: call ferma"
+    notifica "Registrazione avviata: $nome"
+    ;;
+  ferma)
+    [[ -f "$STATO" ]] || { echo "Non sto registrando."; exit 1; }
+    pid=$(sed -n 1p "$STATO"); dir=$(sed -n 2p "$STATO"); nome=$(sed -n 3p "$STATO")
+    pid_diretta=$(sed -n 4p "$STATO")
+    if [[ -n "$pid_diretta" ]]; then
+      kill -TERM "$pid_diretta" 2>/dev/null
+      for i in {1..25}; do kill -0 "$pid_diretta" 2>/dev/null || break; sleep 0.2; done
+      kill -KILL "$pid_diretta" 2>/dev/null
+    fi
+    kill -INT "$pid" 2>/dev/null
+    for i in {1..50}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+    rm -f "$STATO"
+    echo "Registrazione fermata. Trascrivo in background: ti arriva una notifica quando è pronta."
+    ( trascrivi "$dir" "$nome" ) >/dev/null 2>&1 &!
+    ;;
+  stato)
+    if [[ -f "$STATO" ]] && kill -0 "$(sed -n 1p "$STATO")" 2>/dev/null; then
+      echo "Sto registrando: $(sed -n 3p "$STATO") (da $(basename "$(sed -n 2p "$STATO")"))"
+    else
+      echo "Non sto registrando."
+    fi
+    ;;
+  trascrivi)
+    [[ -d "${2:-}" ]] || { echo "Uso: call trascrivi <cartella> [nome]"; exit 1; }
+    trascrivi "$2" "${3:-Interlocutore}"
+    cat "$2/trascrizione.log" | tail -5
+    ;;
+  riprova)
+    riprova
+    ;;
+  pulisci)
+    nt_cli pulisci "$VAULT_TRASCR"
+    ;;
+  *)
+    echo "Uso: call avvia [nome] | call ferma | call stato | call trascrivi <cartella> [nome] | call riprova | call pulisci"
+    ;;
+esac

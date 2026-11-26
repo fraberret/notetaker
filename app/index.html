@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notetaker</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --fondo: #121216; --pannello: #18181e; --rialzo: #202028; --linea: #2a2a33; --linea-forte: #3a3a46;
+  --testo: #f2f2f5; --tenue: #a3a3ad; --spento: #8a8a94;
+  --rosso: #ff4d4d; --blu: #5a9eff; --verde: #33c275; --giallo: #f0b43c;
+  --raggio: 8px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--fondo); color: var(--testo);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--blu); outline-offset: 2px; }
+.app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; min-width: 900px; }
+
+/* barra laterale */
+.lato { background: var(--pannello); border-right: 1px solid var(--linea); padding: 18px 12px; display: flex;
+  flex-direction: column; gap: 14px; }
+.marchio { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 15px; padding: 0 6px; }
+.marchio i { width: 8px; height: 22px; border-radius: 4px; background: var(--rosso); display: inline-block; }
+.cerca { position: relative; }
+.cerca input { width: 100%; background: var(--rialzo); border: 1px solid var(--linea); border-radius: var(--raggio);
+  padding: 7px 10px; outline: none; }
+.cerca input:focus { border-color: var(--blu); }
+.voci { display: flex; flex-direction: column; gap: 2px; }
+.voce { background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--tenue); }
+.voce:hover { background: var(--rialzo); color: var(--testo); }
+.voce.attiva { background: var(--rialzo); color: var(--testo); font-weight: 600; }
+.voce .conta { float: right; color: var(--spento); font-weight: 400; font-variant-numeric: tabular-nums; }
+.lato .piede { margin-top: auto; color: var(--spento); font-size: 12px; padding: 0 6px; }
+
+/* contenuto */
+.principale { overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.sezione { display: none; flex: 1; min-height: 0; }
+.sezione.attiva { display: flex; }
+.colonne { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; }
+.elenco { border-right: 1px solid var(--linea); overflow-y: auto; padding: 10px 0 30px; }
+.giorno { color: var(--spento); font-size: 12px; font-weight: 600; padding: 14px 18px 6px; }
+.giorno::first-letter { text-transform: uppercase; }
+.riga-call { display: block; width: 100%; background: none; border: 0; text-align: left; padding: 9px 18px;
+  border-left: 2px solid transparent; }
+.riga-call:hover { background: var(--pannello); }
+.riga-call.scelta { background: var(--rialzo); border-left-color: var(--rosso); }
+.riga-call .nome { font-weight: 600; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.riga-call .nome span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.riga-call .info { color: var(--tenue); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.badge { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; white-space: nowrap; flex: none; }
+.badge.rosso { background: rgba(255,77,77,.16); color: #ff8080; }
+.badge.giallo { background: rgba(240,180,60,.15); color: var(--giallo); }
+.badge.blu { background: rgba(90,158,255,.15); color: #8dbcff; }
+.punto { width: 7px; height: 7px; border-radius: 50%; background: var(--rosso); display: inline-block;
+  animation: pulsa 1.4s ease-in-out infinite; }
+@keyframes pulsa { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .punto { animation: none; } }
+
+.dettaglio { overflow-y: auto; min-width: 0; }
+.vuoto { color: var(--spento); padding: 60px 30px; text-align: center; }
+.testa { position: sticky; top: 0; background: var(--fondo); z-index: 2; padding: 18px 26px 0;
+  border-bottom: 1px solid var(--linea); }
+.testa h1 { font-size: 19px; margin: 0 0 2px; font-weight: 650; overflow-wrap: anywhere; }
+.testa .sotto { color: var(--tenue); font-size: 13px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.azioni { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
+.btn { background: var(--rialzo); border: 1px solid var(--linea-forte); border-radius: 7px; padding: 5px 12px; }
+.btn:hover { border-color: #55556a; }
+.btn.primario { background: var(--blu); border-color: var(--blu); color: #0b1020; font-weight: 600; }
+.btn.piccolo { padding: 2px 9px; font-size: 12.5px; }
+.btn:disabled { opacity: .5; cursor: default; }
+audio { width: 100%; height: 34px; margin: 4px 0 6px; }
+.audio-nota { color: var(--spento); font-size: 12.5px; margin: 6px 0; }
+.schede { display: flex; gap: 2px; }
+.scheda { background: none; border: 0; padding: 9px 14px; color: var(--tenue); border-bottom: 2px solid transparent; }
+.scheda.attiva { color: var(--testo); border-bottom-color: var(--rosso); font-weight: 600; }
+.corpo { padding: 18px 26px 60px; max-width: 920px; }
+
+/* trascrizione */
+.turno { display: grid; grid-template-columns: 58px 1fr; gap: 10px; padding: 7px 8px; border-radius: 6px; position: relative; }
+.turno:hover { background: var(--pannello); }
+.turno.evidenzia { background: rgba(90,158,255,.12); }
+.orario { background: none; border: 0; color: var(--spento); font-variant-numeric: tabular-nums; font-size: 12.5px;
+  text-align: left; padding: 2px 0; align-self: start; }
+.orario:hover { color: var(--blu); }
+.chi { background: none; border: 0; padding: 0; font-weight: 650; margin-right: 6px; }
+.chi.rinominabile:hover { text-decoration: underline; }
+.testo-turno { overflow-wrap: anywhere; }
+.modifica { position: absolute; right: 6px; top: 5px; background: var(--rialzo); border: 1px solid var(--linea-forte);
+  border-radius: 6px; color: var(--tenue); font-size: 12px; padding: 1px 8px; opacity: 0; }
+.turno:hover .modifica, .modifica:focus { opacity: 1; }
+.corretta { color: var(--spento); font-size: 11.5px; margin-left: 6px; }
+textarea.edita { width: 100%; min-height: 70px; background: var(--rialzo); border: 1px solid var(--blu);
+  border-radius: 6px; padding: 8px; resize: vertical; }
+.proposta { background: rgba(90,158,255,.1); border: 1px solid rgba(90,158,255,.35); border-radius: 8px;
+  padding: 10px 12px; margin: 8px 0 4px; font-size: 13.5px; }
+.proposta b { font-weight: 600; }
+.etichetta-bozza { display: inline-block; margin-bottom: 12px; }
+
+/* nota */
+.nota h1, .nota h2, .nota h3 { margin: 18px 0 6px; line-height: 1.3; }
+.nota h1 { font-size: 18px; } .nota h2 { font-size: 15.5px; } .nota h3 { font-size: 14.5px; }
+.nota p { margin: 6px 0; } .nota ul { margin: 4px 0; padding-left: 20px; }
+.nota code { background: var(--rialzo); padding: 0 4px; border-radius: 4px; }
+.nota a { color: var(--blu); }
+
+/* chiedi */
+.chiedi { display: flex; gap: 8px; }
+.chiedi input { flex: 1; background: var(--rialzo); border: 1px solid var(--linea-forte); border-radius: 7px; padding: 7px 10px; }
+.risposta { white-space: pre-wrap; background: var(--pannello); border: 1px solid var(--linea); border-radius: 8px;
+  padding: 12px 14px; margin-top: 14px; }
+.risposta .min { color: var(--blu); cursor: pointer; }
+
+/* dettature, dizionario, impostazioni */
+.pagina { flex: 1; overflow-y: auto; padding: 22px 30px 60px; }
+.pagina > .dentro { max-width: 860px; }
+.pagina h2 { font-size: 19px; margin: 0 0 4px; }
+.pagina .spiega { color: var(--tenue); margin: 0 0 18px; }
+.dett { display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; padding: 10px 10px; border-radius: 7px;
+  border-bottom: 1px solid var(--linea); }
+.dett:hover { background: var(--pannello); }
+.dett .ora { color: var(--spento); font-variant-numeric: tabular-nums; font-size: 12.5px; padding-top: 1px; }
+.dett .app-nome { color: var(--tenue); font-size: 12px; }
+.dett .ops { display: flex; gap: 6px; align-items: start; }
+.blocco { background: var(--pannello); border: 1px solid var(--linea); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; }
+.blocco h3 { margin: 0 0 10px; font-size: 14.5px; }
+.tabella { width: 100%; border-collapse: collapse; }
+.tabella td { padding: 6px 4px; border-top: 1px solid var(--linea); vertical-align: middle; }
+.tabella td.freccia { color: var(--spento); width: 24px; text-align: center; }
+.tabella td.num { color: var(--spento); font-size: 12px; white-space: nowrap; text-align: right; }
+.tabella td.op { width: 1%; white-space: nowrap; text-align: right; }
+.form-riga { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.form-riga input { flex: 1; min-width: 140px; background: var(--rialzo); border: 1px solid var(--linea-forte);
+  border-radius: 7px; padding: 6px 10px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--rialzo); border: 1px solid var(--linea);
+  border-radius: 99px; padding: 2px 6px 2px 10px; margin: 3px; font-size: 13px; }
+.chip button { background: none; border: 0; color: var(--spento); padding: 0 4px; }
+.chip button:hover { color: var(--rosso); }
+.imp { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 12px 0;
+  border-top: 1px solid var(--linea); }
+.imp:first-of-type { border-top: 0; }
+.imp .desc { color: var(--tenue); font-size: 12.5px; }
+.imp select, .imp input[type=number] { background: var(--rialzo); border: 1px solid var(--linea-forte); border-radius: 7px;
+  padding: 5px 8px; min-width: 120px; }
+.imp input[type=range] { width: 160px; accent-color: var(--blu); }
+.interruttore { position: relative; width: 38px; height: 22px; display: inline-block; }
+.interruttore input { opacity: 0; width: 0; height: 0; position: absolute; }
+.interruttore span { position: absolute; inset: 0; background: var(--linea-forte); border-radius: 99px; transition: background .15s; }
+.interruttore span::after { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
+  background: #fff; border-radius: 50%; transition: transform .15s; }
+.interruttore input:checked + span { background: var(--verde); }
+.interruttore input:checked + span::after { transform: translateX(16px); }
+.interruttore input:focus-visible + span { outline: 2px solid var(--blu); outline-offset: 2px; }
+.salvato { color: var(--verde); font-size: 12.5px; height: 18px; }
+
+/* ricerca */
+.risultato { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--linea);
+  padding: 10px 8px; border-radius: 6px; }
+.risultato:hover { background: var(--pannello); }
+.risultato .dove { color: var(--tenue); font-size: 12.5px; }
+mark { background: rgba(240,180,60,.3); color: inherit; border-radius: 2px; }
+
+.avviso { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--rialzo);
+  border: 1px solid var(--linea-forte); padding: 8px 16px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+  z-index: 10; max-width: 80vw; }
+.avviso.errore { border-color: var(--rosso); }
+.attesa { color: var(--tenue); }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="lato" aria-label="Sezioni">
+    <div class="marchio"><i></i>Notetaker</div>
+    <div class="cerca"><input id="cerca" type="search" placeholder="Cerca…" aria-label="Cerca in call e dettature"></div>
+    <div class="voci">
+      <button class="voce attiva" data-sez="call">Call <span class="conta" id="n-call"></span></button>
+      <button class="voce" data-sez="dettature">Dettature <span class="conta" id="n-dett"></span></button>
+      <button class="voce" data-sez="dizionario">Dizionario <span class="conta" id="n-sugg"></span></button>
+      <button class="voce" data-sez="impostazioni">Impostazioni</button>
+    </div>
+    <div class="piede">Tutto resta su questo Mac.<br>Solo il testo delle call va a Claude.</div>
+  </nav>
+
+  <main class="principale">
+    <section class="sezione attiva" id="sez-call">
+      <div class="colonne">
+        <div class="elenco" id="elenco-call" aria-label="Elenco delle call"></div>
+        <div class="dettaglio" id="dettaglio"><div class="vuoto">Scegli una call a sinistra.</div></div>
+      </div>
+    </section>
+    <section class="sezione" id="sez-dettature"><div class="pagina"><div class="dentro" id="dettature"></div></div></section>
+    <section class="sezione" id="sez-dizionario"><div class="pagina"><div class="dentro" id="dizionario"></div></div></section>
+    <section class="sezione" id="sez-impostazioni"><div class="pagina"><div class="dentro" id="impostazioni"></div></div></section>
+    <section class="sezione" id="sez-ricerca"><div class="pagina"><div class="dentro" id="ricerca"></div></div></section>
+  </main>
+</div>
+
+<script>
+"use strict";
+const G = new URLSearchParams(location.search).get("g") || "";
+const COLORI = ["#ff8a5c", "#5ad1c4", "#c58cff", "#f0c24b", "#ff7eb6", "#7fd45a", "#8fa8ff", "#e0a070"];
+const COLORE_IO = "#5a9eff";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const enc = encodeURIComponent;
+
+async function api(metodo, percorso, corpo) {
+  const r = await fetch(percorso, {method: metodo, headers: {"X-Gettone": G, ...(corpo ? {"Content-Type": "application/json"} : {})},
+    body: corpo ? JSON.stringify(corpo) : undefined});
+  if (!r.ok) {
+    let msg = "Errore " + r.status;
+    try { msg = (await r.json()).errore || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  const tipo = r.headers.get("Content-Type") || "";
+  return tipo.includes("json") ? r.json() : r;
+}
+
+let timerAvviso;
+function avviso(testo, errore = false) {
+  let a = $(".avviso");
+  if (!a) { a = document.createElement("div"); a.className = "avviso"; a.setAttribute("role", "status"); document.body.append(a); }
+  a.textContent = testo; a.classList.toggle("errore", errore); a.hidden = false;
+  clearTimeout(timerAvviso); timerAvviso = setTimeout(() => a.hidden = true, errore ? 6000 : 2500);
+}
+
+const MESI = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+const GIORNI = ["domenica","lunedì","martedì","mercoledì","giovedì","venerdì","sabato"];
+function etichettaGiorno(iso) {
+  const d = new Date(iso + "T12:00:00");
+  if (isNaN(d)) return iso;
+  const oggi = new Date(); const ieri = new Date(Date.now() - 86400000);
+  const stesso = (a, b) => a.toDateString() === b.toDateString();
+  if (stesso(d, oggi)) return "Oggi";
+  if (stesso(d, ieri)) return "Ieri";
+  return `${GIORNI[d.getDay()]} ${d.getDate()} ${MESI[d.getMonth()]}` + (d.getFullYear() !== oggi.getFullYear() ? " " + d.getFullYear() : "");
+}
+function durata(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + " s";
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+function orologio(s) {
+  s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ":" : "") + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0");
+}
+function isoGiorno(ts) { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function oraDi(ts) { const d = new Date(ts * 1000); return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0"); }
+
+/* ---------- navigazione ---------- */
+let sezione = "call";
+function vai(sez) {
+  sezione = sez;
+  document.querySelectorAll(".voce").forEach(b => b.classList.toggle("attiva", b.dataset.sez === sez));
+  document.querySelectorAll(".sezione").forEach(s => s.classList.toggle("attiva", s.id === "sez-" + sez));
+  if (sez === "call") caricaCall();
+  if (sez === "dettature") caricaDettature();
+  if (sez === "dizionario") caricaDizionario();
+  if (sez === "impostazioni") caricaImpostazioni();
+}
+document.querySelectorAll(".voce").forEach(b => b.addEventListener("click", () => { $("#cerca").value = ""; vai(b.dataset.sez); }));
+
+/* ---------- call ---------- */
+let calls = [], scelta = null, dett = null, scheda = "trascrizione", timerDiretta = null, timerElenco = null;
+
+async function caricaCall() {
+  try { calls = await api("GET", "/api/call"); } catch (e) { avviso(e.message, true); return; }
+  $("#n-call").textContent = calls.length || "";
+  disegnaElenco();
+  if (!scelta && calls.length) apriCall(calls[0].id);
+  else if (scelta && !calls.some(c => c.id === scelta)) {
+    // una call "in elaborazione" è finita nel vault: si passa alla versione finale con lo stesso nome
+    const vecchia = dett; scelta = null;
+    const nuova = vecchia && calls.find(c => !c.id.startsWith("reg:") && c.nome === vecchia.nome && c.data === vecchia.data);
+    if (nuova) apriCall(nuova.id); else $("#dettaglio").innerHTML = '<div class="vuoto">Scegli una call a sinistra.</div>';
+  }
+  clearTimeout(timerElenco);
+  if (calls.some(c => c.stato === "in_corso" || c.stato === "in_elaborazione")) timerElenco = setTimeout(() => sezione === "call" && caricaCall(), 10000);
+}
+
+function badgeStato(c) {
+  if (c.stato === "in_corso") return '<span class="badge rosso"><span class="punto"></span> In corso</span>';
+  if (c.stato === "in_elaborazione") return '<span class="badge blu">In elaborazione</span>';
+  if (c.stato === "da_rileggere") return '<span class="badge giallo">Da rileggere</span>';
+  return "";
+}
+
+function disegnaElenco() {
+  const el = $("#elenco-call");
+  if (!calls.length) { el.innerHTML = '<div class="vuoto">Nessuna call ancora.<br>Ctrl+Option+Cmd+R per registrarne una.</div>'; return; }
+  let html = "", giorno = null;
+  for (const c of calls) {
+    const g = c.stato === "in_corso" ? "In corso" : etichettaGiorno(c.data);
+    if (g !== giorno) { html += `<div class="giorno">${esc(g)}</div>`; giorno = g; }
+    const persone = c.persone ? ` · ${c.persone} ${c.persone === 1 ? "persona" : "persone"}` : "";
+    html += `<button class="riga-call${c.id === scelta ? " scelta" : ""}" data-id="${esc(c.id)}">
+      <div class="nome"><span>${esc(c.nome)}</span>${badgeStato(c)}</div>
+      <div class="info">${durata(c.durata_s)}${persone}</div></button>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".riga-call").forEach(b => b.addEventListener("click", () => apriCall(b.dataset.id)));
+}
+
+function nomeDi(chi) { return (dett && dett.nomi && dett.nomi[chi]) || chi; }
+function coloreDi(chi) {
+  if (chi === "Io") return COLORE_IO;
+  const altri = (dett.elenco_persone || []).filter(p => p !== "Io");
+  const i = altri.indexOf(chi);
+  return COLORI[(i < 0 ? 0 : i) % COLORI.length];
+}
+
+async function apriCall(id, rigaDaEvidenziare) {
+  clearTimeout(timerDiretta);
+  scelta = id; disegnaElenco();
+  try { dett = await api("GET", "/api/call/" + enc(id)); } catch (e) { avviso(e.message, true); return; }
+  dett.apertaAlle = Date.now();
+  if (dett.bozza) scheda = "trascrizione";
+  disegnaDettaglio();
+  if (rigaDaEvidenziare != null) evidenzia(rigaDaEvidenziare);
+  if (dett.bozza) seguiDiretta();
+}
+
+// Durata mostrata: per la call in corso cresce con il tempo passato da quando si è aperta.
+function durataOra(d) {
+  return d.stato === "in_corso" ? d.durata_s + (Date.now() - (d.apertaAlle || Date.now())) / 1000 : d.durata_s;
+}
+
+function disegnaDettaglio() {
+  const d = dett, el = $("#dettaglio");
+  const persone = (d.elenco_persone || []).map(p => nomeDi(p)).join(", ");
+  let audio = "";
+  if (d.audio) audio = `<audio id="lettore" controls preload="metadata" src="/audio/${enc(d.id)}?g=${enc(G)}"></audio>`;
+  else if (d.audio_cancellato) audio = `<div class="audio-nota">Audio cancellato in automatico (impostazione «audio delle call»). La trascrizione resta.</div>`;
+  else if (!d.bozza) audio = `<div class="audio-nota">Nessun audio per questa call.</div>`;
+  const azioni = d.bozza ? "" : `
+      ${d.stato === "da_rileggere" ? '<button class="btn primario" id="b-rileggi">Rileggi ora</button>' : ""}
+      <button class="btn" id="b-esporta">Esporta .txt</button>
+      ${d.nota_percorso ? '<button class="btn" id="b-obsidian">Apri in Obsidian</button>' : ""}`;
+  el.innerHTML = `
+    <div class="testa">
+      <h1>${esc(d.nome)}</h1>
+      <div class="sotto">${esc(etichettaGiorno(d.data))} · <span id="durata-call">${durata(durataOra(d))}</span>${persone ? " · " + esc(persone) : ""} ${badgeStato(d)}</div>
+      ${audio}
+      <div class="azioni">${azioni}</div>
+      <div class="schede" role="tablist">
+        ${d.bozza ? "" : `<button class="scheda" data-s="riassunto" role="tab">Riassunto</button>`}
+        <button class="scheda" data-s="trascrizione" role="tab">Trascrizione</button>
+        ${d.bozza ? "" : `<button class="scheda" data-s="chiedi" role="tab">Chiedi a Claude</button>`}
+      </div>
+    </div>
+    <div class="corpo" id="corpo"></div>`;
+  el.querySelectorAll(".scheda").forEach(b => b.addEventListener("click", () => { scheda = b.dataset.s; disegnaScheda(); }));
+  $("#b-rileggi")?.addEventListener("click", rileggiOra);
+  $("#b-esporta")?.addEventListener("click", esporta);
+  $("#b-obsidian")?.addEventListener("click", () => api("POST", "/api/apri", {percorso: d.nota_percorso}).catch(e => avviso(e.message, true)));
+  disegnaScheda();
+}
+
+function disegnaScheda() {
+  document.querySelectorAll(".scheda").forEach(b => { b.classList.toggle("attiva", b.dataset.s === scheda); b.setAttribute("aria-selected", b.dataset.s === scheda); });
+  const c = $("#corpo");
+  if (scheda === "riassunto") {
+    c.innerHTML = dett.nota ? `<div class="nota">${markdown(dett.nota)}</div>`
+      : '<div class="attesa">Nessuna nota per questa call (le note arrivano in 00 Inbox dopo la trascrizione).</div>';
+  } else if (scheda === "chiedi") {
+    c.innerHTML = `<form class="chiedi" id="f-chiedi"><input id="domanda" placeholder="Per esempio: che prezzo abbiamo detto per il sito?" autocomplete="off">
+      <button class="btn primario">Chiedi</button></form><div id="risposta"></div>`;
+    $("#f-chiedi").addEventListener("submit", chiedi);
+    $("#domanda").focus();
+  } else {
+    disegnaTrascrizione();
+  }
+}
+
+function htmlTurno(t) {
+  const rinominabile = !dett.bozza && t.chi !== "Io";
+  return `<div class="turno" id="t-${t.i}" data-i="${t.i}">
+    <button class="orario" data-s="${t.s}" title="Ascolta da qui">${esc(t.t)}</button>
+    <div><button class="chi${rinominabile ? " rinominabile" : ""}" data-chi="${esc(t.chi)}" style="color:${coloreDi(t.chi)}"
+      ${rinominabile ? 'title="Dai un nome a questa persona"' : "disabled"}>${esc(nomeDi(t.chi))}</button><span class="testo-turno">${esc(t.testo)}</span>${t.corretta ? '<span class="corretta">corretto</span>' : ""}${dett.bozza ? "" : '<button class="modifica" title="Correggi questa riga">Modifica</button>'}</div></div>`;
+}
+
+function disegnaTrascrizione() {
+  const c = $("#corpo");
+  const bozza = dett.bozza ? `<span class="badge blu etichetta-bozza">${dett.stato === "in_corso" ? "Diretta, bozza" : "Bozza, in elaborazione"}</span>` : "";
+  c.innerHTML = bozza + (dett.turni.length ? dett.turni.map(htmlTurno).join("") : '<div class="attesa">Ancora niente: il testo compare qui mentre si parla.</div>');
+  c.querySelectorAll(".orario").forEach(b => b.addEventListener("click", () => salta(+b.dataset.s)));
+  c.querySelectorAll(".chi.rinominabile").forEach(b => b.addEventListener("click", () => rinomina(b.dataset.chi)));
+  c.querySelectorAll(".modifica").forEach(b => b.addEventListener("click", () => modificaRiga(+b.closest(".turno").dataset.i)));
+}
+
+function salta(s) {
+  const a = $("#lettore");
+  if (!a) { avviso(dett.bozza ? "L'audio arriva con la versione finale." : "L'audio di questa call non c'è più."); return; }
+  a.currentTime = s; a.play().catch(() => {});
+}
+function evidenzia(i) {
+  scheda = "trascrizione"; disegnaScheda();
+  const r = $("#t-" + i); if (!r) return;
+  r.classList.add("evidenzia"); r.scrollIntoView({block: "center"});
+  setTimeout(() => r.classList.remove("evidenzia"), 2500);
+}
+
+function rinomina(chi) {
+  const b = document.querySelector(`.chi[data-chi="${CSS.escape(chi)}"]`); if (!b) return;
+  const campo = document.createElement("input");
+  campo.value = dett.nomi[chi] || ""; campo.placeholder = chi; campo.setAttribute("aria-label", `Nome per ${chi}`);
+  campo.style.cssText = "background:var(--rialzo);border:1px solid var(--blu);border-radius:6px;padding:1px 6px;width:180px;margin-right:6px";
+  b.replaceWith(campo); campo.focus(); campo.select();
+  let fatto = false;
+  const salva = async () => {
+    if (fatto) return; fatto = true;
+    try { const r = await api("POST", "/api/nomi/" + enc(dett.id), {[chi]: campo.value}); dett.nomi = r.nomi; }
+    catch (e) { avviso(e.message, true); }
+    disegnaDettaglio();
+  };
+  campo.addEventListener("keydown", e => { if (e.key === "Enter") salva(); if (e.key === "Escape") { fatto = true; disegnaDettaglio(); } });
+  campo.addEventListener("blur", salva);
+}
+
+function modificaRiga(i) {
+  const riga = $("#t-" + i), t = dett.turni[i];
+  const box = riga.querySelector(".testo-turno").parentElement;
+  box.innerHTML = `<b style="color:${coloreDi(t.chi)}">${esc(nomeDi(t.chi))}</b>
+    <textarea class="edita" aria-label="Testo della riga">${esc(t.testo)}</textarea>
+    <div class="azioni"><button class="btn primario piccolo" data-a="salva">Salva</button><button class="btn piccolo" data-a="annulla">Annulla</button>
+    <span class="desc" style="color:var(--spento);font-size:12px">La trascrizione nel vault non cambia: la correzione resta nell'app.</span></div>`;
+  const ta = box.querySelector("textarea"); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  box.querySelector('[data-a="annulla"]').onclick = () => disegnaTrascrizione();
+  box.querySelector('[data-a="salva"]').onclick = async () => {
+    try {
+      const r = await api("POST", "/api/correzioni/" + enc(dett.id), {riga: i, testo: ta.value});
+      t.testo = " ".concat(ta.value).trim().replace(/\s+/g, " "); t.corretta = true;
+      disegnaTrascrizione();
+      proponiRegole(r.suggerimenti, $("#t-" + i));
+    } catch (e) { avviso(e.message, true); }
+  };
+}
+
+function proponiRegole(sugg, dopo) {
+  if (!sugg || !sugg.length || !dopo) return;
+  const box = document.createElement("div"); box.className = "proposta";
+  box.innerHTML = "<b>Ricordo questa correzione?</b> Da ora in poi vale per dettature e call." + sugg.map(([da, a], k) =>
+    `<div class="azioni" style="margin:8px 0 0"><span>«${esc(da)}» → «${esc(a)}»</span>
+     <button class="btn primario piccolo" data-k="${k}">Sì, ricorda</button><button class="btn piccolo" data-no="${k}">No</button></div>`).join("");
+  dopo.after(box);
+  box.querySelectorAll("[data-k]").forEach(b => b.onclick = async () => {
+    const [da, a] = sugg[+b.dataset.k];
+    try { await api("POST", "/api/dizionario/sostituzione", {da, a}); avviso(`Ricordato: «${da}» → «${a}»`); }
+    catch (e) { avviso(e.message, true); }
+    b.closest(".azioni").remove(); if (!box.querySelector(".azioni")) box.remove();
+  });
+  box.querySelectorAll("[data-no]").forEach(b => b.onclick = () => { b.closest(".azioni").remove(); if (!box.querySelector(".azioni")) box.remove(); });
+}
+
+async function rileggiOra() {
+  const b = $("#b-rileggi"); b.disabled = true; b.textContent = "Rileggo con Claude…";
+  try { dett = await api("POST", "/api/rileggi/" + enc(dett.id)); avviso("Riletta: le correzioni sono nell'app, il file nel vault non cambia."); disegnaDettaglio(); caricaCall(); }
+  catch (e) { avviso(e.message, true); b.disabled = false; b.textContent = "Rileggi ora"; }
+}
+
+async function esporta() {
+  try {
+    const r = await api("POST", "/api/esporta/" + enc(dett.id));
+    const blob = await r.blob();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = dett.id + ".txt"; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { avviso(e.message, true); }
+}
+
+async function chiedi(ev) {
+  ev.preventDefault();
+  const domanda = $("#domanda").value.trim(); if (!domanda) return;
+  const out = $("#risposta"); out.innerHTML = '<div class="risposta attesa">Chiedo a Claude…</div>';
+  try {
+    const r = await api("POST", "/api/chiedi/" + enc(dett.id), {domanda});
+    out.innerHTML = `<div class="risposta">${esc(r.risposta).replace(/\((\d{1,2}:\d{2}(?::\d{2})?)\)/g, (m, t) => `(<span class="min" data-t="${t}">${t}</span>)`)}</div>`;
+    out.querySelectorAll(".min").forEach(s => s.onclick = () => { const p = s.dataset.t.split(":").map(Number); salta(p.reduce((a, b) => a * 60 + b, 0)); });
+  } catch (e) { out.innerHTML = `<div class="risposta">${esc(e.message)}</div>`; }
+}
+
+/* diretta: interroga /api/diretta ogni 2 secondi e scorre da sola se si è in fondo */
+async function seguiDiretta() {
+  clearTimeout(timerDiretta);
+  if (!dett || !dett.bozza || sezione !== "call") return;
+  const id = dett.id;
+  try {
+    const r = await api("GET", "/api/diretta/" + enc(id) + "?da=" + dett.turni.length);
+    if (!dett || dett.id !== id) return;
+    const stato = r.in_corso ? "in_corso" : "in_elaborazione";
+    if (stato !== dett.stato) {  // la registrazione è finita: intestazione ed etichetta cambiano
+      dett.durata_s = Math.round(durataOra(dett)); dett.stato = stato;
+      dett.turni = dett.turni.concat(r.righe.map(x => ({...x, corretta: false}))); r.righe = [];
+      disegnaDettaglio(); caricaCall();
+    }
+    const d = $("#durata-call"); if (d) d.textContent = durata(durataOra(dett));
+    if (r.righe.length && scheda === "trascrizione") {
+      const contenitore = $("#dettaglio");
+      const inFondo = contenitore.scrollHeight - contenitore.scrollTop - contenitore.clientHeight < 80;
+      for (const x of r.righe) {
+        if (!dett.elenco_persone.includes(x.chi)) dett.elenco_persone.push(x.chi);
+        dett.turni.push({...x, corretta: false});
+      }
+      disegnaTrascrizione();
+      if (inFondo) contenitore.scrollTop = contenitore.scrollHeight;
+    }
+    if (r.finita) { caricaCall(); return; }
+  } catch (e) { if (!dett || dett.id !== id) return; caricaCall(); return; }
+  timerDiretta = setTimeout(seguiDiretta, 2000);
+}
+
+/* Markdown semplice per le note (titoli, elenchi, grassetto, corsivo, codice, link) */
+function inline(s) {
+  return esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\s)(.+?)\*/g, "$1<i>$2</i>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (m, a, b) => `<b>${b || a}</b>`)
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function markdown(md) {
+  md = md.replace(/^---\n[\s\S]*?\n---\n/, "");
+  const out = []; let lista = false;
+  for (const r of md.split("\n")) {
+    const h = r.match(/^(#{1,3})\s+(.*)/), li = r.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (!li && lista) { out.push("</ul>"); lista = false; }
+    if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+    else if (li) { if (!lista) { out.push("<ul>"); lista = true; } out.push(`<li>${inline(li[1].replace(/^\[[ x]\]\s*/, ""))}</li>`); }
+    else if (r.trim()) out.push(`<p>${inline(r)}</p>`);
+  }
+  if (lista) out.push("</ul>");
+  return out.join("");
+}
+
+/* ---------- dettature ---------- */
+let dettature = [];
+async function caricaDettature() {
+  try { dettature = await api("GET", "/api/dettature"); } catch (e) { avviso(e.message, true); return; }
+  $("#n-dett").textContent = dettature.length || "";
+  const el = $("#dettature");
+  let html = `<h2>Dettature</h2><p class="spiega">Tutto quello che hai dettato con la pillola, il più recente in alto.</p>`;
+  if (!dettature.length) html += '<div class="vuoto">Nessuna dettatura ancora. Tieni premuto il tasto di dettatura e parla.</div>';
+  let giorno = null;
+  for (const d of dettature) {
+    const g = etichettaGiorno(isoGiorno(d.t));
+    if (g !== giorno) { html += `<div class="giorno" style="padding-left:10px">${esc(g)}</div>`; giorno = g; }
+    html += `<div class="dett" id="d-${String(d.t).replace(".", "_")}" data-t="${d.t}">
+      <div class="ora">${oraDi(d.t)}</div>
+      <div><div class="testo-turno">${esc(d.testo)}</div>${d.app ? `<div class="app-nome">${esc(d.app)}</div>` : ""}</div>
+      <div class="ops"><button class="btn piccolo" data-a="copia">Copia</button><button class="btn piccolo" data-a="modifica">Modifica</button><button class="btn piccolo" data-a="elimina">Elimina</button></div></div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".dett").forEach(r => {
+    const d = dettature.find(x => String(x.t) === r.dataset.t);
+    r.querySelector('[data-a="copia"]').onclick = async () => { await navigator.clipboard.writeText(d.testo).catch(() => {}); avviso("Copiato"); };
+    r.querySelector('[data-a="elimina"]').onclick = async (ev) => {
+      const b = ev.currentTarget;
+      if (!b.dataset.sicuro) { b.dataset.sicuro = "1"; b.textContent = "Sicuro?"; b.style.borderColor = "var(--rosso)";
+        setTimeout(() => { b.dataset.sicuro = ""; b.textContent = "Elimina"; b.style.borderColor = ""; }, 3000); return; }
+      try { await api("DELETE", "/api/dettature/" + enc(d.t)); caricaDettature(); } catch (e) { avviso(e.message, true); }
+    };
+    r.querySelector('[data-a="modifica"]').onclick = () => {
+      const box = r.children[1];
+      box.innerHTML = `<textarea class="edita" aria-label="Testo della dettatura">${esc(d.testo)}</textarea>
+        <div class="azioni"><button class="btn primario piccolo" data-a="salva">Salva</button><button class="btn piccolo" data-a="annulla">Annulla</button></div>`;
+      const ta = box.querySelector("textarea"); ta.focus();
+      box.querySelector('[data-a="annulla"]').onclick = () => caricaDettature();
+      box.querySelector('[data-a="salva"]').onclick = async () => {
+        try {
+          const res = await api("POST", "/api/dettature/" + enc(d.t), {testo: ta.value});
+          await caricaDettature();
+          proponiRegole(res.suggerimenti, $("#d-" + String(d.t).replace(".", "_")));
+        } catch (e) { avviso(e.message, true); }
+      };
+    };
+  });
+}
+
+/* ---------- dizionario ---------- */
+async function caricaDizionario(diz) {
+  try { diz = diz || await api("GET", "/api/dizionario"); } catch (e) { avviso(e.message, true); return; }
+  $("#n-sugg").textContent = diz.suggerimenti.length || "";
+  const el = $("#dizionario");
+  const sost = [...diz.sostituzioni].sort((a, b) => a.da.localeCompare(b.da, "it"));
+  const term = [...diz.termini].sort((a, b) => a.testo.localeCompare(b.testo, "it"));
+  el.innerHTML = `<h2>Dizionario</h2>
+    <p class="spiega">Le sostituzioni correggono parole sbagliate dopo la trascrizione (parola intera, maiuscole indifferenti), in dettature e call. I termini aiutano Whisper a scrivere bene i nomi.</p>
+    ${diz.suggerimenti.length ? `<div class="blocco"><h3>Suggerimenti dalla rilettura di Claude (${diz.suggerimenti.length})</h3>
+      <table class="tabella">${diz.suggerimenti.map(s => `<tr><td>${esc(s.da)}</td><td class="freccia">→</td><td>${esc(s.a)}</td>
+      <td class="op"><button class="btn primario piccolo" data-ok="${esc(s.da)}">Approva</button> <button class="btn piccolo" data-no="${esc(s.da)}">Scarta</button></td></tr>`).join("")}</table></div>` : ""}
+    <div class="blocco"><h3>Sostituzioni (${sost.length})</h3>
+      ${sost.length ? `<table class="tabella">${sost.map(s => `<tr><td>${esc(s.da)}</td><td class="freccia">→</td><td>${esc(s.a)}</td>
+        <td class="num">${s.usi ? s.usi + " usi" : ""}</td>
+        <td class="op"><button class="btn piccolo" data-mod="${esc(s.da)}">Modifica</button> <button class="btn piccolo" data-del="${esc(s.da)}">Elimina</button></td></tr>`).join("")}</table>` : '<div class="attesa">Nessuna sostituzione.</div>'}
+      <form class="form-riga" id="f-sost"><input name="da" placeholder="Sbagliato (es. Querchia)" required><input name="a" placeholder="Giusto (es. Bottega Quercia)" required><button class="btn primario">Aggiungi</button></form>
+    </div>
+    <div class="blocco"><h3>Termini (${term.length})</h3>
+      <div>${term.map(t => `<span class="chip">${esc(t.testo)}<button title="Togli" data-term="${esc(t.testo)}" aria-label="Togli ${esc(t.testo)}">×</button></span>`).join("") || '<div class="attesa">Nessun termine.</div>'}</div>
+      <form class="form-riga" id="f-term"><input name="testo" placeholder="Nuovo termine (es. un marchio o un cliente)" required><button class="btn primario">Aggiungi</button>
+      <button type="button" class="btn" id="b-vault">Riprendi i nomi dal vault</button></form>
+    </div>`;
+  el.querySelectorAll("[data-ok]").forEach(b => b.onclick = () => azioneDiz("POST", "/api/dizionario/suggerimento/" + enc(b.dataset.ok), {azione: "approva"}));
+  el.querySelectorAll("[data-no]").forEach(b => b.onclick = () => azioneDiz("POST", "/api/dizionario/suggerimento/" + enc(b.dataset.no), {azione: "scarta"}));
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = () => azioneDiz("DELETE", "/api/dizionario/sostituzione/" + enc(b.dataset.del)));
+  el.querySelectorAll("[data-term]").forEach(b => b.onclick = () => azioneDiz("DELETE", "/api/dizionario/termine/" + enc(b.dataset.term)));
+  el.querySelectorAll("[data-mod]").forEach(b => b.onclick = () => {
+    const s = sost.find(x => x.da === b.dataset.mod); const f = $("#f-sost");
+    f.da.value = s.da; f.a.value = s.a; f.dataset.vecchio = s.da; f.querySelector("button").textContent = "Salva"; f.a.focus();
+  });
+  $("#f-sost").onsubmit = ev => { ev.preventDefault(); const f = ev.target;
+    azioneDiz("POST", "/api/dizionario/sostituzione", {da: f.da.value, a: f.a.value, vecchio_da: f.dataset.vecchio || ""}); };
+  $("#f-term").onsubmit = ev => { ev.preventDefault(); azioneDiz("POST", "/api/dizionario/termine", {testo: ev.target.testo.value}); };
+  $("#b-vault").onclick = async () => {
+    try { const r = await api("POST", "/api/dizionario/dal-vault"); avviso(r.aggiunti.length ? `Aggiunti ${r.aggiunti.length} nomi dal vault` : "Nessun nome nuovo nel vault"); caricaDizionario(r.dizionario); }
+    catch (e) { avviso(e.message, true); }
+  };
+}
+async function azioneDiz(metodo, percorso, corpo) {
+  try { caricaDizionario(await api(metodo, percorso, corpo)); } catch (e) { avviso(e.message, true); }
+}
+
+/* ---------- impostazioni ---------- */
+async function caricaImpostazioni() {
+  let imp;
+  try { imp = await api("GET", "/api/impostazioni"); } catch (e) { avviso(e.message, true); return; }
+  const inter = (k) => `<label class="interruttore"><input type="checkbox" data-k="${k}" ${imp[k] ? "checked" : ""}><span></span></label>`;
+  const giorni = (k, v) => `<select data-k="${k}" data-num="1">${[[0, "Mai"], [30, "Dopo 30 giorni"], [60, "Dopo 60 giorni"], [90, "Dopo 90 giorni"], [180, "Dopo 180 giorni"], [365, "Dopo un anno"]]
+    .concat([[v, `Dopo ${v} giorni`]].filter(([n]) => ![0, 30, 60, 90, 180, 365].includes(n)))
+    .map(([n, t]) => `<option value="${n}" ${n === v ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+  const hs = imp.hammerspoon_al_login;
+  $("#impostazioni").innerHTML = `<h2>Impostazioni</h2><p class="spiega">Valgono subito: la pillola le rilegge appena cambiano.</p>
+    <div class="blocco"><h3>Dettatura</h3>
+      <div class="imp"><div>Tasto di dettatura<div class="desc">Tienilo premuto per dettare, due tocchi per le mani libere.</div></div>
+        <select data-k="tasto"><option value="fn" ${imp.tasto === "fn" ? "selected" : ""}>Fn</option><option value="option_destro" ${imp.tasto === "option_destro" ? "selected" : ""}>Option destro</option></select></div>
+      <div class="imp"><div>Suoni</div>${inter("suoni")}</div>
+      <div class="imp"><div>Volume dei suoni</div><input type="range" min="0" max="1" step="0.05" data-k="volume" data-num="1" value="${imp.volume}" aria-label="Volume dei suoni"></div>
+      <div class="imp"><div>Microfono per la dettatura<div class="desc">Nome del dispositivo come appare in Impostazioni di Sistema › Suono; vuoto = quello predefinito. Le call usano sempre il predefinito.</div></div>
+        <input type="text" data-k="microfono" value="${esc(imp.microfono)}" placeholder="Predefinito" style="background:var(--rialzo);border:1px solid var(--linea-forte);border-radius:7px;padding:5px 8px;width:220px"></div>
+    </div>
+    <div class="blocco"><h3>Call</h3>
+      <div class="imp"><div>Chiedi se trascrivere quando un'app di call usa il microfono</div>${inter("domanda_call")}</div>
+      <div class="imp"><div>Secondi di attesa prima della domanda</div><input type="number" min="1" max="60" data-k="secondi_domanda" data-num="1" value="${imp.secondi_domanda}"></div>
+      <div class="imp"><div>Rilettura con Claude<div class="desc">Punteggiatura, domande con «?», nomi, email e cifre. Manda il testo della call a Claude.</div></div>${inter("rilettura")}</div>
+      <div class="imp"><div>Note automatiche in 00 Inbox</div>${inter("note")}</div>
+    </div>
+    <div class="blocco"><h3>Pulizia</h3>
+      <div class="imp"><div>Cancella l'audio delle call<div class="desc">La trascrizione resta sempre.</div></div>${giorni("giorni_audio", imp.giorni_audio)}</div>
+      <div class="imp"><div>Cancella lo storico delle dettature</div>${giorni("giorni_dettature", imp.giorni_dettature)}</div>
+    </div>
+    <div class="blocco"><h3>Avvio</h3>
+      <div class="imp"><div>Hammerspoon parte al login<div class="desc">Serve alla pillola. Si attiva da solo all'avvio di Hammerspoon; si controlla in Impostazioni di Sistema › Generali › Elementi login.</div></div>
+        <span class="badge ${hs ? "giallo" : "rosso"}" style="${hs ? "background:rgba(51,194,117,.15);color:var(--verde)" : ""}">${hs === true ? "Sì" : hs === false ? "No" : "Non so (Hammerspoon spento?)"}</span></div>
+    </div>
+    <div class="salvato" id="salvato" aria-live="polite"></div>`;
+  $("#impostazioni").querySelectorAll("[data-k]").forEach(c => c.addEventListener("change", async () => {
+    const k = c.dataset.k;
+    let v = c.type === "checkbox" ? c.checked : c.dataset.num ? Number(c.value) : c.value.trim();
+    if (k === "volume") v = Math.round(v * 100) / 100;
+    try { const r = await api("POST", "/api/impostazioni", {[k]: v}); $("#salvato").textContent = "Salvato";
+      setTimeout(() => $("#salvato").textContent = "", 1500);
+      if (r[k] !== v) caricaImpostazioni(); }
+    catch (e) { avviso(e.message, true); }
+  }));
+}
+
+/* ---------- ricerca ---------- */
+let timerCerca;
+$("#cerca").addEventListener("input", () => { clearTimeout(timerCerca); timerCerca = setTimeout(cerca, 250); });
+$("#cerca").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; vai("call"); } });
+async function cerca() {
+  const q = $("#cerca").value.trim();
+  if (q.length < 2) { if (sezione === "ricerca") vai("call"); return; }
+  sezione = "ricerca";
+  document.querySelectorAll(".voce").forEach(b => b.classList.remove("attiva"));
+  document.querySelectorAll(".sezione").forEach(s => s.classList.toggle("attiva", s.id === "sez-ricerca"));
+  let r;
+  try { r = await api("GET", "/api/cerca?q=" + enc(q)); } catch (e) { avviso(e.message, true); return; }
+  const evid = s => esc(s).replace(new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), m => `<mark>${m}</mark>`);
+  $("#ricerca").innerHTML = `<h2>Risultati per «${esc(q)}»</h2><p class="spiega">${r.length} ${r.length === 1 ? "risultato" : "risultati"} in call e dettature.</p>` +
+    (r.length ? r.map((x, k) => `<button class="risultato" data-k="${k}"><div class="dove">${x.tipo === "call"
+      ? `Call · ${esc(x.nome)} · ${esc(etichettaGiorno(x.data))} · ${esc(x.t)} · ${esc(x.chi)}`
+      : `Dettatura · ${esc(etichettaGiorno(isoGiorno(x.t)))} ${oraDi(x.t)}${x.app ? " · " + esc(x.app) : ""}`}</div><div>${evid(x.testo)}</div></button>`).join("")
+      : '<div class="vuoto">Niente trovato.</div>');
+  $("#ricerca").querySelectorAll(".risultato").forEach(b => b.onclick = async () => {
+    const x = r[+b.dataset.k];
+    if (x.tipo === "call") { vai("call"); await apriCall(x.id, x.i); }
+    else { vai("dettature"); setTimeout(() => { const el = $("#d-" + String(x.t).replace(".", "_")); if (el) { el.scrollIntoView({block: "center"}); el.style.background = "rgba(90,158,255,.12)"; setTimeout(() => el.style.background = "", 2500); } }, 300); }
+  });
+}
+
+document.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("#cerca").focus(); } });
+caricaCall();
+api("GET", "/api/dizionario").then(d => $("#n-sugg").textContent = d.suggerimenti.length || "").catch(() => {});
+api("GET", "/api/dettature").then(d => $("#n-dett").textContent = d.length || "").catch(() => {});
+</script>
+</body>
+</html>
