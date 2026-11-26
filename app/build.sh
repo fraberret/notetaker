@@ -1,12 +1,15 @@
 #!/bin/zsh
-# Compila Notetaker.app in ~/Applications: eseguibile Swift, Info.plist, icona, firma ad hoc.
+# Compila Notetaker.app in ~/Applications: eseguibile Swift, Info.plist, icona, firma.
 set -euo pipefail
 B="${0:A:h:h}"
 APP="$HOME/Applications/Notetaker.app"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-swiftc -O -target arm64-apple-macos13.0 -o "$TMP/Notetaker" "$B/app/Notetaker.swift" -framework AppKit -framework WebKit
+SORGENTI=("$B"/app/*.swift(N) "$B"/app/pillola/*.swift(N))
+swiftc -O -target arm64-apple-macos13.0 -o "$TMP/Notetaker" "${SORGENTI[@]}" \
+  -framework AppKit -framework WebKit -framework AVFoundation -framework CoreAudio \
+  -framework Carbon -framework ServiceManagement
 "$B/venv/bin/python" "$B/app/icona.py" "$TMP/Notetaker.iconset"
 iconutil -c icns -o "$TMP/Notetaker.icns" "$TMP/Notetaker.iconset"
 
@@ -31,10 +34,22 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>LSUIElement</key><false/>
+  <key>NSMicrophoneUsageDescription</key><string>Serve per la dettatura e per registrare le call.</string>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>io.github.fraberret.notetaker</string>
+    <key>CFBundleURLSchemes</key><array><string>notetaker</string></array>
+  </dict></array>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 </plist>
 PLIST
-codesign --force -s - "$APP"
+# Firma col certificato locale se c'è (app/certificato.sh): i permessi di macOS restano dopo ogni build.
+if security find-identity -p codesigning 2>/dev/null | grep -q '"Notetaker locale"'; then
+  codesign --force -s "Notetaker locale" "$APP"
+else
+  codesign --force -s - "$APP"
+fi
 touch "$APP"
 echo "Creata $APP"

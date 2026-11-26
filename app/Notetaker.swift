@@ -207,9 +207,3 @@ final class Delegato: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavig
         }
     }
 }
-
-let app = NSApplication.shared
-let delegato = Delegato()
-app.delegate = delegato
-app.setActivationPolicy(.regular)
-app.run()
