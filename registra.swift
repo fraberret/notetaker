@@ -23,6 +23,47 @@ func log(_ s: String) {
     FileHandle.standardError.write((s + "\n").data(using: .utf8)!)
 }
 
+/// Scelta del microfono, come nella dettatura (variabile REGISTRA_MICROFONO, passata da `call`):
+/// "" = microfono del Mac, "auto" = predefinito del sistema, un nome = quel dispositivo (se manca, il Mac).
+enum Dispositivi {
+    static func indirizzo(_ sel: AudioObjectPropertySelector,
+                          _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+
+    static func ingressi() -> [(id: AudioDeviceID, nome: String, integrato: Bool)] {
+        var a = indirizzo(kAudioHardwarePropertyDevices)
+        var n: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &n) == noErr else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(n) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &n, &ids) == noErr else { return [] }
+        return ids.compactMap { id in
+            var s = indirizzo(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput)
+            var dim: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(id, &s, 0, nil, &dim) == noErr, dim > 0 else { return nil }
+            var nome: Unmanaged<CFString>?
+            var na = indirizzo(kAudioObjectPropertyName)
+            var dn = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(id, &na, 0, nil, &dn, &nome) == noErr, let v = nome?.takeRetainedValue() else { return nil }
+            var t = indirizzo(kAudioDevicePropertyTransportType)
+            var tipo: UInt32 = 0
+            var tn = UInt32(MemoryLayout<UInt32>.size)
+            let integrato = AudioObjectGetPropertyData(id, &t, 0, nil, &tn, &tipo) == noErr && tipo == kAudioDeviceTransportTypeBuiltIn
+            return (id, v as String, integrato)
+        }
+    }
+
+    static func scelto(_ impostazione: String) -> (id: AudioDeviceID, nome: String)? {
+        let tutti = ingressi()
+        let mac = tutti.first { $0.integrato }.map { ($0.id, $0.nome) }
+        switch impostazione {
+        case "auto": return nil
+        case "": return mac
+        default: return tutti.first { $0.nome == impostazione }.map { ($0.id, $0.nome) } ?? mac
+        }
+    }
+}
+
 /// Microfono con AVAudioEngine: canale 0, convertito in mono float32 a 48 kHz.
 final class Microfono {
     let url: URL
@@ -71,6 +112,14 @@ final class Microfono {
     private func prepara(voce: Bool) throws {
         let e = AVAudioEngine()
         let ingresso = e.inputNode
+        let impostazione = ProcessInfo.processInfo.environment["REGISTRA_MICROFONO"] ?? ""
+        var quale = "predefinito del sistema"
+        if let d = Dispositivi.scelto(impostazione), let au = ingresso.audioUnit {
+            var id = d.id
+            let r = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                         &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            quale = r == noErr ? d.nome : "predefinito del sistema (\(d.nome) non impostabile: \(r))"
+        }
         if voce {
             try ingresso.setVoiceProcessingEnabled(true)
             if #available(macOS 14.0, *) {
@@ -79,7 +128,9 @@ final class Microfono {
             }
             _ = e.outputNode
         }
-        let formato = ingresso.outputFormat(forBus: 0)
+        // Microfono normale: il formato vero del dispositivo scelto (outputFormat resta quello del
+        // predefinito, e con una chiamata in corso il tap non riceveva niente). Modalità voce: l'uscita elaborata.
+        let formato = voce ? ingresso.outputFormat(forBus: 0) : ingresso.inputFormat(forBus: 0)
         guard formato.sampleRate > 0, formato.channelCount > 0 else {
             throw NSError(domain: "registra", code: 3, userInfo: [NSLocalizedDescriptionKey: "Nessun microfono"])
         }
@@ -105,7 +156,7 @@ final class Microfono {
         modalitaVoce = voce
         picchiCanali = Array(repeating: 0, count: Int(formato.channelCount))
         diagnosiScritta = false
-        log("Microfono avviato: \(voce ? "modalità voce" : "normale"), \(formato.channelCount) canali a \(Int(formato.sampleRate)) Hz")
+        log("Microfono avviato: \(quale), \(voce ? "modalità voce" : "normale"), \(formato.channelCount) canali a \(Int(formato.sampleRate)) Hz")
         // Cuffie attaccate o staccate: il motore si ferma e va rifatto, nello stesso modo.
         osservatore = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: e, queue: nil) { [weak self] _ in
@@ -130,6 +181,7 @@ final class Microfono {
         let n = Int(buf.frameLength)
         let adesso = Date()
         ultimoBuffer = adesso
+        bufferMotore += 1
         var picco: Float = 0
         for c in 0..<min(Int(buf.format.channelCount), picchiCanali.count) {
             var m: Float = 0
@@ -209,11 +261,22 @@ final class Microfono {
     /// Ogni secondo, sulla coda.
     func controlla() {
         let adesso = Date()
+        // Microfono normale che non manda proprio niente (non solo audio muto): si prova la modalità voce.
+        if !modalitaVoce && adesso.timeIntervalSince(ultimoBuffer ?? avvio) >= Self.secondiPerPassare {
+            log("Microfono normale senza audio da \(Int(Self.secondiPerPassare)) s: passo alla modalità voce")
+            spegni()
+            avvia(voce: true)
+            return
+        }
         if adesso.timeIntervalSince(ultimoBuffer ?? avvio) > 10 { avvisa("nessun audio dal microfono da 10 s") }
         if adesso.timeIntervalSince(ultimoNonZero ?? avvio) > 20 { avvisa("microfono a zero da 20 s") }
     }
 
+    var bufferMotore = 0
+
     func spegni() {
+        if engine != nil { log("Microfono spento dopo \(bufferMotore) blocchi") }
+        bufferMotore = 0
         generazione += 1
         if let o = osservatore { NotificationCenter.default.removeObserver(o) }
         osservatore = nil

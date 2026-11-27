@@ -237,6 +237,33 @@ def registrazioni_aperte() -> list[Path]:
     return out
 
 
+def microfoni(uscita_profiler: str | None = None) -> dict:
+    """Microfoni collegati (nome, Mac sì o no) e quello predefinito del sistema, da system_profiler.
+    Prima il microfono del Mac, poi gli altri; i dispositivi virtuali (BlackHole e simili) in fondo."""
+    if uscita_profiler is None:
+        try:
+            uscita_profiler = subprocess.run(["system_profiler", "SPAudioDataType", "-json"], capture_output=True,
+                                             text=True, timeout=20).stdout
+        except Exception:
+            uscita_profiler = ""
+    try:
+        voci = json.loads(uscita_profiler)["SPAudioDataType"][0]["_items"]
+    except Exception:
+        voci = []
+    elenco, predefinito, visti = [], "", set()
+    for v in voci:
+        nome = v.get("_name", "")
+        if not v.get("coreaudio_device_input") or not nome or nome in visti:
+            continue
+        visti.add(nome)
+        tipo = v.get("coreaudio_device_transport", "")
+        elenco.append({"nome": nome, "mac": tipo.endswith("builtin"), "virtuale": tipo.endswith("virtual")})
+        if v.get("coreaudio_default_audio_input_device") == "spaudio_yes":
+            predefinito = nome
+    elenco.sort(key=lambda m: (not m["mac"], m["virtuale"]))
+    return {"microfoni": elenco, "predefinito": predefinito}
+
+
 def elenco_call() -> list[dict]:
     attiva = registrazione_attiva()
     reg = [info_reg(d, attiva) for d in registrazioni_aperte()]
@@ -405,6 +432,8 @@ class Gestore(BaseHTTPRequestHandler):
             return self.invia(200, dizionario.carica())
         if parti == ["api", "impostazioni"]:
             return self.invia(200, dati.carica_impostazioni())
+        if parti == ["api", "microfoni"]:
+            return self.invia(200, microfoni())
         if parti == ["api", "cerca"]:
             return self.invia(200, self.cerca(query.get("q", [""])[0]))
         if len(parti) == 2 and parti[0] == "audio":

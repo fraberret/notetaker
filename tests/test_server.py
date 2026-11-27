@@ -190,3 +190,23 @@ def test_da_rileggere_e_esporta(motore):
     s, corpo, r = motore["chiama"]("POST", "/api/esporta/" + q(CALL_A))
     assert s == 200 and "attachment" in r.getheader("Content-Disposition")
     assert "Giulia: bene grazie" in corpo.decode()
+
+
+PROFILER = json.dumps({"SPAudioDataType": [{"_items": [
+    {"_name": "BlackHole 2ch", "coreaudio_device_input": 2, "coreaudio_device_transport": "coreaudio_device_type_virtual"},
+    {"_name": "Cuffie esterne", "coreaudio_device_transport": "coreaudio_device_type_builtin"},
+    {"_name": "AirPods di Prova", "coreaudio_default_audio_input_device": "spaudio_yes", "coreaudio_device_input": 1,
+     "coreaudio_device_transport": "coreaudio_device_type_bluetooth"},
+    {"_name": "Microfono MacBook Air", "coreaudio_device_input": 1, "coreaudio_device_transport": "coreaudio_device_type_builtin"},
+    {"_name": "AirPods di Prova", "coreaudio_device_transport": "coreaudio_device_type_bluetooth"},
+]}]})
+
+
+def test_microfoni_mac_prima_e_predefinito():
+    sys.path.insert(0, str(BASE / "app"))
+    import server
+    r = server.microfoni(PROFILER)
+    assert [m["nome"] for m in r["microfoni"]] == ["Microfono MacBook Air", "AirPods di Prova", "BlackHole 2ch"]
+    assert r["microfoni"][0]["mac"] and r["microfoni"][2]["virtuale"]
+    assert r["predefinito"] == "AirPods di Prova"
+    assert server.microfoni("non json") == {"microfoni": [], "predefinito": ""}

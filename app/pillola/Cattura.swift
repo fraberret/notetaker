@@ -42,6 +42,38 @@ enum DispositiviAudio {
         ingressi().first { $0.1 == nome }?.0
     }
 
+    static func nome(_ id: AudioDeviceID) -> String {
+        ingressi().first { $0.0 == id }?.1 ?? "predefinito"
+    }
+
+    /// Il microfono del Mac (trasporto "built-in" con canali di ingresso).
+    static func integrato() -> AudioDeviceID? {
+        ingressi().first { id, _ in
+            var a = indirizzo(kAudioDevicePropertyTransportType)
+            var t: UInt32 = 0
+            var n = UInt32(MemoryLayout<UInt32>.size)
+            return AudioObjectGetPropertyData(id, &a, 0, nil, &n, &t) == noErr && t == kAudioDeviceTransportTypeBuiltIn
+        }?.0
+    }
+
+    /// Microfono da usare secondo l'impostazione (come Wispr Flow, 27/11/2026):
+    /// "" = microfono del Mac, "auto" = quello predefinito del sistema (nil), un nome = quel dispositivo.
+    /// Se il dispositivo scelto non c'è si usa il microfono del Mac, mai il predefinito: un paio di AirPods
+    /// collegate da sole ma non indossate diventano il predefinito e non sentono niente.
+    static func scelto(_ impostazione: String) -> AudioDeviceID? {
+        switch impostazione {
+        case "auto": return nil
+        case "": return integrato()
+        default: return ingresso(nome: impostazione) ?? integrato()
+        }
+    }
+
+    /// Nome del microfono che si sta usando davvero, per gli avvisi.
+    static func nomeInUso(_ impostazione: String) -> String {
+        if let id = scelto(impostazione) { return nome(id) }
+        return predefinitoIngresso().map(nome) ?? "predefinito"
+    }
+
     /// Il dispositivo è in uso da qualche programma (anche da noi).
     static func inUso(_ id: AudioDeviceID) -> Bool {
         var a = indirizzo(kAudioDevicePropertyDeviceIsRunningSomewhere)
@@ -90,8 +122,7 @@ final class Cattura {
     private func avviaSullaCoda() throws {
         let m = AVAudioEngine()
         let ingresso = m.inputNode
-        if !microfono.isEmpty, var dev = DispositiviAudio.ingresso(nome: microfono),
-           let au = ingresso.audioUnit {
+        if var dev = DispositiviAudio.scelto(microfono), let au = ingresso.audioUnit {
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                  &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
         }

@@ -5,7 +5,7 @@ struct Impostazioni: Equatable {
     var tasto = "fn"              // "fn" oppure "option_destro"
     var suoni = true
     var volume = 0.45
-    var microfono = ""            // vuoto = microfono predefinito
+    var microfono = ""            // "" = microfono del Mac, "auto" = predefinito del sistema, altrimenti il nome
     var domandaCall = true
     var secondiDomanda = 6
 

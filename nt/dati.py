@@ -20,7 +20,7 @@ IMPOSTAZIONI_PREDEFINITE = {
     "tasto": "fn",              # "fn" oppure "option_destro"
     "suoni": True,
     "volume": 0.45,
-    "microfono": "",            # "" = quello predefinito del sistema
+    "microfono": "",            # "" = microfono del Mac, "auto" = predefinito del sistema, o un nome
     "domanda_call": True,
     "secondi_domanda": 6,
     "rilettura": True,

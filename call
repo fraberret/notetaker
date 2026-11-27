@@ -199,7 +199,9 @@ case "${1:-}" in
     nome="${2:-Interlocutore}"
     dir="$REG/$(date +%Y-%m-%d_%H-%M-%S)"
     mkdir -p "$dir"
-    nohup "$BASE/registra" "$dir" >"$dir/registra.log" 2>&1 &
+    # Microfono scelto nelle impostazioni ("" = quello del Mac, "auto" = predefinito, oppure un nome).
+    REGISTRA_MICROFONO="$(nt_cli impostazione microfono 2>/dev/null)" \
+      nohup "$BASE/registra" "$dir" >"$dir/registra.log" 2>&1 &
     pid=$!
     sleep 2
     if ! kill -0 $pid 2>/dev/null; then

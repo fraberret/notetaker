@@ -12,7 +12,7 @@ Tutto resta sul Mac. L'unica cosa che esce è il **testo delle call** mandato a 
 
 | Pezzo | Cosa fa |
 |---|---|
-| `registra.swift` | registra microfono e audio di sistema su due file (ScreenCaptureKit) |
+| `registra.swift` | registra microfono (AVAudioEngine, con la modalità voce quando un'app di chiamata come WhatsApp toglie il microfono alle altre) e audio di sistema (ScreenCaptureKit) su due file |
 | `call` | comando zsh: `call avvia "Nome"`, `call ferma`, `call stato`, `call trascrivi`, `call riprova`, `call pulisci` |
 | `diretta.py`, `nt/diretta.py`, `nt/caf.py` | diretta durante la call: legge i file mentre crescono, taglia sulle pause, trascrive con Parakeet |
 | `voci.py`, `trascrivi_tratti.py`, `unisci.py` | versione finale: con più persone chi parla (sherpa-onnx) e trascrizione per intervento (whisper.cpp), turni "[mm:ss] Chi: testo" |
@@ -30,6 +30,7 @@ Se Claude non risponde, la call aspetta e si riprova; dopo 24 ore entra la versi
 - Mac con Apple Silicon, macOS 15 o successivo
 - [Homebrew](https://brew.sh): `brew install whisper-cpp ffmpeg uv`
 - [Claude Code](https://claude.com/claude-code) (`claude` in `~/.local/bin`) per rilettura e note; facoltativo
+- Microfono: di base quello del Mac, come consiglia anche Wispr Flow (un paio di AirPods collegate ma non indossate diventerebbero il predefinito e non sentirebbero niente); si cambia nelle impostazioni dell'app. Se il microfono non manda audio, la pillola avvisa.
 - Permessi di macOS per Notetaker: Accessibilità (tasto di dettatura, Esc, incolla), Microfono, Registrazione schermo e audio di sistema (registrazione delle call)
 
 ### Modelli

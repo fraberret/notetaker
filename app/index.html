@@ -624,6 +624,15 @@ async function azioneDiz(metodo, percorso, corpo) {
 }
 
 /* ---------- impostazioni ---------- */
+// "" = microfono del Mac (consigliato, come Wispr Flow), "auto" = quello predefinito del sistema, altrimenti un nome.
+function opzioniMicrofono(valore, m) {
+  const op = (v, t) => `<option value="${esc(v)}" ${v === valore ? "selected" : ""}>${esc(t)}</option>`;
+  const lista = (m && m.microfoni) || [];
+  let html = op("", "Microfono del Mac (consigliato)") + op("auto", "Automatico" + (m && m.predefinito ? ` (ora: ${m.predefinito})` : " (quello predefinito del Mac)"));
+  for (const x of lista.filter(x => !x.mac)) html += op(x.nome, x.nome);
+  if (valore && valore !== "auto" && !lista.some(x => x.nome === valore)) html += op(valore, `${valore} (non collegato: uso il Mac)`);
+  return html;
+}
 async function caricaImpostazioni() {
   let imp;
   try { imp = await api("GET", "/api/impostazioni"); } catch (e) { avviso(e.message, true); return; }
@@ -637,8 +646,8 @@ async function caricaImpostazioni() {
         <select data-k="tasto"><option value="fn" ${imp.tasto === "fn" ? "selected" : ""}>Fn</option><option value="option_destro" ${imp.tasto === "option_destro" ? "selected" : ""}>Option destro</option></select></div>
       <div class="imp"><div>Suoni</div>${inter("suoni")}</div>
       <div class="imp"><div>Volume dei suoni</div><input type="range" min="0" max="1" step="0.05" data-k="volume" data-num="1" value="${imp.volume}" aria-label="Volume dei suoni"></div>
-      <div class="imp"><div>Microfono per la dettatura<div class="desc">Nome del dispositivo come appare in Impostazioni di Sistema › Suono; vuoto = quello predefinito. Le call usano sempre il predefinito.</div></div>
-        <input type="text" data-k="microfono" value="${esc(imp.microfono)}" placeholder="Predefinito" style="background:var(--rialzo);border:1px solid var(--linea-forte);border-radius:7px;padding:5px 8px;width:220px"></div>
+      <div class="imp"><div>Microfono<div class="desc">Per dettatura e call. Quello del Mac ti sente bene anche con le AirPods addosso e non le mette in modalità telefono. Se il microfono scelto non è collegato si usa quello del Mac.</div></div>
+        <select data-k="microfono" id="sel-microfono" style="max-width:260px">${opzioniMicrofono(imp.microfono, null)}</select></div>
     </div>
     <div class="blocco"><h3>Call</h3>
       <div class="imp"><div>Chiedi se trascrivere quando un'app di call usa il microfono</div>${inter("domanda_call")}</div>
@@ -662,6 +671,8 @@ async function caricaImpostazioni() {
     $("#al-login").onchange = e => ponte.postMessage({azione: "alLogin", valore: e.target.checked});
     ponte.postMessage({azione: "alLogin"});
   }
+  // L'elenco dei microfoni arriva da system_profiler (1-2 secondi): il menu si completa dopo.
+  api("GET", "/api/microfoni").then(m => { const sel = $("#sel-microfono"); if (sel) sel.innerHTML = opzioniMicrofono(imp.microfono, m); }).catch(() => {});
   $("#impostazioni").querySelectorAll("[data-k]").forEach(c => c.addEventListener("change", async () => {
     const k = c.dataset.k;
     let v = c.type === "checkbox" ? c.checked : c.dataset.num ? Number(c.value) : c.value.trim();

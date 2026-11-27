@@ -11,6 +11,7 @@ import AVFoundation
 let marcaEventiNostri: Int64 = 0x4E54_4B52
 
 final class Dettatura: AzioniTasto {
+    static let attesaPrimoAudio: TimeInterval = 2.5   // dal tasto confermato al primo audio vero (le AirPods ci mettono 1-2 s)
     static let audioMinimo = 16000           // byte: sotto mezzo secondo non si trascrive
     static let limiteDizionario = 1.5
     static let ritardoAppunti = 0.8
@@ -103,6 +104,14 @@ final class Dettatura: AzioniTasto {
         segnaDettaturaInCall(da: s.avvio, a: nil)
         appDettatura = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         segnalaAscolto(s)
+        // Tasto confermato ma dal microfono non arriva niente (27/11/2026: AirPods collegate da sole e non
+        // indossate): invece di restare muti, suono di errore e il nome del microfono che si sta ascoltando.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.attesaPrimoAudio) { [weak self] in
+            guard let self, self.corrente === s, !s.pronta else { return }
+            let nome = DispositiviAudio.nomeInUso(self.impostazioni().microfono)
+            self.erroreCattura(s)
+            Avviso.mostra("Il microfono «\(nome)» non manda audio. Scegli un altro microfono nelle impostazioni del Notetaker.", secondi: 6)
+        }
     }
 
     func fine(annulla: Bool) {
