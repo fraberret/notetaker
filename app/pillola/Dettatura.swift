@@ -123,8 +123,20 @@ final class Dettatura: AzioniTasto {
         segnaDettaturaInCall(da: s.avvio, a: Date())
         if annulla { suoni.suona("annulla"); tornaARiposo() } else { suoni.suona("stop"); pillola.mostra(.trascrivo) }
         let app = appDettatura
+        var risposto = false
+        // Se il microfono è bloccato dentro CoreAudio la chiusura non risponde: dopo 4 s si torna a riposo.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, !risposto else { return }
+            risposto = true
+            if !annulla {
+                self.suoni.suona("annulla")
+                Avviso.mostra("Il microfono non ha risposto: riprova. Se succede ancora, chiudi e riapri il Notetaker.", secondi: 6)
+            }
+            self.tornaARiposo()
+        }
         s.cattura.ferma { [weak self] dim in
-            guard let self else { return }
+            guard let self, !risposto else { return }
+            risposto = true
             let file = s.cattura.file
             if annulla { try? FileManager.default.removeItem(at: file); return }
             if dim > Self.audioMinimo {

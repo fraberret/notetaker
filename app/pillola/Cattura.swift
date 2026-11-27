@@ -95,7 +95,9 @@ final class Cattura {
     /// Il microfono non parte o sparisce (sul thread principale).
     var errore: (() -> Void)?
 
-    private static let coda = DispatchQueue(label: "notetaker.cattura", qos: .userInteractive)
+    // Una coda per ogni cattura: se CoreAudio si blocca dentro un avvio (27/11/2026, cambio di microfono
+    // con AirPods), le dettature dopo non restano in fila dietro quella bloccata.
+    private let coda = DispatchQueue(label: "notetaker.cattura", qos: .userInteractive)
     private var motore: AVAudioEngine?
     private var scrittura: AVAudioFile?
     private var convertitore: AVAudioConverter?
@@ -110,7 +112,7 @@ final class Cattura {
 
     /// Accende il microfono (in background). Gli errori arrivano con `errore`.
     func avvia() {
-        Cattura.coda.async { [self] in
+        coda.async { [self] in
             do { try avviaSullaCoda() } catch {
                 NSLog("Notetaker: cattura non avviata: \(error)")
                 pulisciSullaCoda()
@@ -144,12 +146,12 @@ final class Cattura {
         convertitore = conv
         motore = m
         ingresso.installTap(onBus: 0, bufferSize: 1024, format: formatoIn) { [weak self] buf, _ in
-            Cattura.coda.async { self?.blocco(buf, formatoOut) }
+            self?.coda.async { self?.blocco(buf, formatoOut) }
         }
         osservatore = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: m,
                                                              queue: nil) { [weak self] _ in
             guard let self else { return }
-            Cattura.coda.async {
+            self.coda.async {
                 guard !self.finita else { return }
                 NSLog("Notetaker: il microfono è cambiato durante la dettatura")
                 self.pulisciSullaCoda()
@@ -202,7 +204,7 @@ final class Cattura {
 
     /// Spegne il microfono e chiude il file; `fatto` riceve i byte scritti (sul thread principale).
     func ferma(_ fatto: @escaping (Int) -> Void) {
-        Cattura.coda.async { [self] in
+        coda.async { [self] in
             pulisciSullaCoda()
             let dim = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
             DispatchQueue.main.async { fatto(dim) }
@@ -211,7 +213,7 @@ final class Cattura {
 
     /// Spegne il microfono e cancella il file.
     func butta() {
-        Cattura.coda.async { [self] in
+        coda.async { [self] in
             pulisciSullaCoda()
             try? FileManager.default.removeItem(at: file)
         }
