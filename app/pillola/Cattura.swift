@@ -104,6 +104,7 @@ final class Cattura {
     private var arrivato = false
     private var finita = false
     private var osservatore: NSObjectProtocol?
+    private var riavvii = 0
 
     init(file: URL, microfono: String) {
         self.file = file
@@ -124,7 +125,9 @@ final class Cattura {
     private func avviaSullaCoda() throws {
         let m = AVAudioEngine()
         let ingresso = m.inputNode
-        if var dev = DispositiviAudio.scelto(microfono), let au = ingresso.audioUnit {
+        // Si cambia dispositivo solo se serve: il cambio fa partire un "configuration changed" all'avvio.
+        if var dev = DispositiviAudio.scelto(microfono), dev != DispositiviAudio.predefinitoIngresso(),
+           let au = ingresso.audioUnit {
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                  &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
@@ -153,6 +156,16 @@ final class Cattura {
             guard let self else { return }
             self.coda.async {
                 guard !self.finita else { return }
+                // Prima del primo audio è quasi sempre l'avvio stesso (cambio di dispositivo, cuffie): si
+                // riaccende il microfono, al massimo due volte (27/11/2026: la dettatura non partiva più).
+                if !self.arrivato && self.riavvii < 2 {
+                    self.riavvii += 1
+                    NSLog("Notetaker: microfono riconfigurato all'avvio, lo riaccendo (\(self.riavvii))")
+                    self.spegniMotore()
+                    do { try self.avviaSullaCoda(); return } catch {
+                        NSLog("Notetaker: cattura non riavviata: \(error)")
+                    }
+                }
                 NSLog("Notetaker: il microfono è cambiato durante la dettatura")
                 self.pulisciSullaCoda()
                 DispatchQueue.main.async { self.errore?() }
@@ -188,6 +201,16 @@ final class Cattura {
             return buf
         }
         if err == nil, out.frameLength > 0 { try? f.write(from: out) }
+    }
+
+    /// Spegne il motore senza chiudere la cattura (per riaccenderlo).
+    private func spegniMotore() {
+        if let o = osservatore { NotificationCenter.default.removeObserver(o); osservatore = nil }
+        if let m = motore {
+            m.inputNode.removeTap(onBus: 0)
+            m.stop()
+        }
+        motore = nil
     }
 
     private func pulisciSullaCoda() {
