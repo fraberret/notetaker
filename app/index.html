@@ -699,7 +699,27 @@ async function cerca() {
 }
 
 document.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("#cerca").focus(); } });
+
+/* Quando parte una call, la finestra passa da sola alla sua diretta, da qualsiasi sezione
+   (prima la si vedeva solo cliccando su Call: 27/11/2026). Una volta per call: poi si naviga liberi. */
+let callInCorsoVista = null;
+async function controllaCallNuova() {
+  try {
+    const lista = await api("GET", "/api/call");
+    const c = lista.find(x => x.stato === "in_corso");
+    if (c && c.id !== callInCorsoVista) {
+      callInCorsoVista = c.id;
+      $("#cerca").value = "";
+      vai("call");
+      await apriCall(c.id);
+    } else if (!c) {
+      callInCorsoVista = null;
+    }
+  } catch (e) { /* server non pronto: si riprova */ }
+  setTimeout(controllaCallNuova, 3000);
+}
 caricaCall();
+controllaCallNuova();
 api("GET", "/api/dizionario").then(d => $("#n-sugg").textContent = d.suggerimenti.length || "").catch(() => {});
 api("GET", "/api/dettature").then(d => $("#n-dett").textContent = d.length || "").catch(() => {});
 </script>

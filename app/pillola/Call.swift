@@ -39,6 +39,7 @@ final class GestoreCall {
     private var micIgnora = false
     private var domandaScade: Date?
     private var controllo: Timer?
+    private var microfonoAvvisato: URL?
 
     init(pillola: Pillola, suoni: Suoni, impostazioni: @escaping () -> Impostazioni,
          dettaturaOccupata: @escaping () -> Bool) {
@@ -70,6 +71,7 @@ final class GestoreCall {
     // MARK: domanda
 
     private func controllaMicrofono() {
+        controllaMicrofonoDellaCall()
         if dettaturaOccupata() || pillola.stato == .trascrivo || inCorso { micDa = nil; return }
         let inUso = DispositiviAudio.predefinitoIngresso().map(DispositiviAudio.inUso) ?? false
         if !inUso {
@@ -90,6 +92,18 @@ final class GestoreCall {
         domandaScade = Date().addingTimeInterval(Self.scadenzaDomanda)
         suoni.suona("domanda")
         pillola.mostra(.domanda)
+    }
+
+    /// Durante la call: se `registra` scrive "MICROFONO MUTO" nel suo log, avviso una volta per call
+    /// (call del 27/11/2026: 30 minuti senza la voce di chi registra, senza alcun avviso).
+    private func controllaMicrofonoDellaCall() {
+        guard let cartella = StatoCall.leggi()?.cartella, cartella != microfonoAvvisato,
+              let log = try? String(contentsOf: cartella.appendingPathComponent("registra.log"), encoding: .utf8),
+              log.contains("MICROFONO MUTO") else { return }
+        microfonoAvvisato = cartella
+        suoni.suona("domanda")
+        Avviso.mostra("Attenzione: la tua voce non si sta registrando, solo quella dell'altra persona. "
+                      + "Controlla il microfono in Impostazioni di Sistema > Suono > Ingresso.", secondi: 12)
     }
 
     /// Titoli delle finestre dei browser (servono i permessi di registrazione dello schermo) e app di call aperte.

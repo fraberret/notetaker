@@ -65,6 +65,23 @@ ok "C: audio senza trascrizione accanto resta" '[[ -e "$senza_txt" ]]'
 ok "C: annotato" 'grep -q "Vecchia" "$CALL_DATI/audio-cancellati.json"'
 ok "C: i .txt restano" '[[ $(conta "$CALL_DESTINAZIONE/*.txt") == 3 ]]'
 
+# --- Caso D: manca il microfono (call del 27/11/2026): l'audio della call si salva lo stesso ---
+D="$CALL_REGISTRAZIONI/2026-11-22_10-00-00"; mkdir -p "$D"
+print -r -- '{"inizio_sistema": 100.0, "inizio_microfono": null}' >"$D/inizio.json"
+ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=2" -ar 48000 -ac 1 -c:a pcm_f32le "$D/sistema.caf"
+CALL_WHISPER="$B/tests/finto_whisper.sh" CALL_CLAUDE="$B/tests/finto_claude.sh" "$B/call" trascrivi "$D" "Senza Microfono" >/dev/null
+ok "D: audio nel vault anche senza microfono" '[[ -s "$CALL_DESTINAZIONE/2026-11-22 Trascrizione call Senza Microfono.m4a" ]]'
+ok "D: grezzi tolti dopo il salvataggio" '[[ $(conta "$D/*.caf") == 0 ]]'
+
+# --- Caso E: audio illeggibile, niente .m4a: i file grezzi restano ---
+E="$CALL_REGISTRAZIONI/2026-11-23_10-00-00"; mkdir -p "$E"
+print -r -- '{"inizio_sistema": 100.0, "inizio_microfono": 100.0}' >"$E/inizio.json"
+print -r -- "non è audio" >"$E/sistema.caf"
+print -r -- '{"transcription":[{"offsets":{"from":1000,"to":3000},"text":" ciao"}]}' >"$E/sistema.json"
+CALL_CLAUDE="$B/tests/finto_claude.sh" "$B/call" trascrivi "$E" "Audio Rotto" >/dev/null 2>&1
+ok "E: trascrizione nel vault" '[[ -s "$CALL_DESTINAZIONE/2026-11-23 Trascrizione call Audio Rotto.txt" ]]'
+ok "E: file grezzi tenuti" '[[ -s "$E/sistema.caf" ]]'
+
 rm -rf "${T:?}"
 echo "Errori: $errori"
 exit $(( errori > 0 ))

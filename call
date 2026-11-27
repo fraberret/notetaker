@@ -14,6 +14,7 @@ STATO="${CALL_STATO:-$BASE/stato}"
 MODELLO="$HOME/.cache/whisper-cpp/ggml-large-v3-turbo-q5_0.bin"
 VAD="$HOME/.cache/whisper-cpp/ggml-silero-v5.1.2.bin"
 CLAUDE="${CALL_CLAUDE:-$HOME/.local/bin/claude}"
+WHISPER="${CALL_WHISPER:-whisper-cli}"  # le prove usano tests/finto_whisper.sh
 export PATH="/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 
 nt_cli() { PYTHONPATH="$BASE" "$BASE/venv/bin/python" -m nt.cli "$@"; }
@@ -73,12 +74,19 @@ completa() {
   fi
   [[ -d "$VAULT_TRASCR" && -s "$dir/trascrizione.txt" ]] || { echo "Niente da copiare nel vault"; return 1; }
   cp "$dir/trascrizione.txt" "$dest.txt"
-  [[ -s "$dir/audio.m4a" ]] && cp "$dir/audio.m4a" "$dest.m4a"
+  local audio_salvato=0
+  [[ -s "$dir/audio.m4a" ]] && cp "$dir/audio.m4a" "$dest.m4a" && audio_salvato=1
   print -r -- "$dest" >"$dir/vault.txt"
   echo "Salvata nel vault: $dest.txt"
   [[ -e "$dir/da-rileggere" ]] && nt_cli da-rileggere "$(basename "$dest")"
   # I file grezzi non servono più: l'audio resta solo nel vault, la diretta lascia il posto alla versione finale.
-  rm -f "${dir:?}"/*.caf "${dir:?}"/*.wav "${dir:?}/audio.m4a" "${dir:?}/diretta.jsonl"
+  # Se l'audio compresso non c'è, i file grezzi restano: è l'unica copia (call del 27/11/2026, audio perso).
+  if (( audio_salvato )); then
+    rm -f "${dir:?}"/*.caf "${dir:?}"/*.wav "${dir:?}/audio.m4a" "${dir:?}/diretta.jsonl"
+  else
+    echo "Audio compresso non salvato: tengo i file grezzi in $dir"
+    rm -f "${dir:?}/diretta.jsonl"
+  fi
   if ! note "$dir" "$nome" "$data" "$titolo" "$(basename "$dest").txt"; then
     : >"$dir/note-in-attesa"
   fi
@@ -102,7 +110,7 @@ trascrivi() {
     done
     # Io (microfono): una passata sola, con il filtro dei silenzi.
     if [[ -s "$dir/microfono.wav" ]]; then
-      whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/microfono" -f "$dir/microfono.wav" >/dev/null 2>>"$log.whisper"
+      "$WHISPER" -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/microfono" -f "$dir/microfono.wav" >/dev/null 2>>"$log.whisper"
       echo "Fatta la traccia microfono: $(date)"
     fi
     # Gli altri (audio della call). Con una persona sola (un nome) tutto l'audio è suo: una passata unica.
@@ -110,7 +118,7 @@ trascrivi() {
     local persone; persone=$(quante_persone "$nome")
     if [[ -s "$dir/sistema.wav" && "$persone" -le 1 ]]; then
       rm -f "$dir/sistema.voci.json"
-      whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
+      "$WHISPER" -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
       echo "Una persona sola: fatta la traccia sistema intera: $(date)"
     elif [[ -s "$dir/sistema.wav" ]]; then
       "$BASE/venv/bin/python" "$BASE/voci.py" "$dir/sistema.wav" "$dir/sistema.voci.json" "$persone" && echo "Voci riconosciute ($persone persone): $(date)"
@@ -118,7 +126,7 @@ trascrivi() {
          "$BASE/venv/bin/python" "$BASE/trascrivi_tratti.py" "$dir/sistema.wav" "$dir/sistema.voci.json" "$dir/sistema.json"; then
         echo "Fatta la traccia sistema per interventi: $(date)"
       else
-        whisper-cli -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
+        "$WHISPER" -m "$MODELLO" -l it --vad -vm "$VAD" -t 4 -oj -of "$dir/sistema" -f "$dir/sistema.wav" >/dev/null 2>>"$log.whisper"
         echo "Fatta la traccia sistema intera: $(date)"
       fi
     fi
@@ -128,6 +136,15 @@ trascrivi() {
     if [[ -s "$dir/microfono.wav" && -s "$dir/sistema.wav" ]]; then
       ffmpeg -nostdin -loglevel error -y -i "$dir/microfono.wav" -i "$dir/sistema.wav" \
         -filter_complex "[0:a][1:a]amerge=inputs=2[a]" -map "[a]" -ac 2 -c:a aac -b:a 64k "$dir/audio.m4a"
+    elif [[ -s "$dir/sistema.wav" ]]; then
+      # Manca il microfono: l'altra persona a destra, silenzio a sinistra.
+      ffmpeg -nostdin -loglevel error -y -i "$dir/sistema.wav" \
+        -af "pan=stereo|c0=0*c0|c1=c0" -c:a aac -b:a 64k "$dir/audio.m4a"
+      echo "Audio salvato senza il microfono"
+    elif [[ -s "$dir/microfono.wav" ]]; then
+      ffmpeg -nostdin -loglevel error -y -i "$dir/microfono.wav" \
+        -af "pan=stereo|c0=c0|c1=0*c0" -c:a aac -b:a 64k "$dir/audio.m4a"
+      echo "Audio salvato senza l'audio di sistema"
     fi
 
     # Rilettura con Claude prima di entrare nel vault; se non riesce, la call resta in attesa.
